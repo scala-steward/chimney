@@ -143,15 +143,15 @@ private[compiletime] trait Configurations { this: Derivation =>
     ): TransformerFlags = Type[Flags] match {
       case default if default =:= ChimneyType.TransformerFlags.Default => defaultFlags
       case ChimneyType.TransformerFlags.Enable(flag, flags) =>
-        import flag.Underlying as Flag, flags.Underlying as Flags
+        import flag.Underlying as Flag, flags.Underlying as Flags2
         Flag match {
           case ChimneyType.TransformerFlags.Flags.ImplicitConflictResolution(r) =>
             if (r.Underlying =:= ChimneyType.PreferTotalTransformer)
-              extractTransformerFlags[flags.Underlying](defaultFlags).setImplicitConflictResolution(
+              extractTransformerFlags[Flags2](defaultFlags).setImplicitConflictResolution(
                 Some(dsls.PreferTotalTransformer)
               )
             else if (r.Underlying =:= ChimneyType.PreferPartialTransformer)
-              extractTransformerFlags[flags.Underlying](defaultFlags).setImplicitConflictResolution(
+              extractTransformerFlags[Flags2](defaultFlags).setImplicitConflictResolution(
                 Some(dsls.PreferPartialTransformer)
               )
             else {
@@ -160,15 +160,15 @@ private[compiletime] trait Configurations { this: Derivation =>
               // $COVERAGE-ON$
             }
           case _ =>
-            extractTransformerFlags[flags.Underlying](defaultFlags).setBoolFlag[flag.Underlying](value = true)
+            extractTransformerFlags[Flags](defaultFlags).setBoolFlag[Flag](value = true)
         }
       case ChimneyType.TransformerFlags.Disable(flag, flags) =>
-        import flag.Underlying as Flag, flags.Underlying as Flags
+        import flag.Underlying as Flag, flags.Underlying as Flags2
         Flag match {
           case ChimneyType.TransformerFlags.Flags.ImplicitConflictResolution(_) =>
-            extractTransformerFlags[flags.Underlying](defaultFlags).setImplicitConflictResolution(None)
+            extractTransformerFlags[Flags2](defaultFlags).setImplicitConflictResolution(None)
           case _ =>
-            extractTransformerFlags[flags.Underlying](defaultFlags).setBoolFlag[flag.Underlying](value = false)
+            extractTransformerFlags[Flags2](defaultFlags).setBoolFlag[Flag](value = false)
         }
       case _ =>
         // $COVERAGE-OFF$
