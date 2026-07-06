@@ -1,13 +1,31 @@
 package io.scalaland.chimney.internal.compiletime
 
-/** Gathers all possible derivation errors in a single type */
-sealed trait DerivationError extends Product with Serializable
+/** Gathers all possible derivation errors in a single type.
+  *
+  * Extends a stackless `Exception` so instances can travel inside MIO's `MErrors` (`NonEmptyVector[Throwable]`) - the
+  * `message` only serves debugging; user-facing rendering goes through [[DerivationError.printErrors]], which is pinned
+  * (tests assert on the exact output).
+  */
+sealed abstract class DerivationError(message: String) extends Exception(message, null, false, false)
 object DerivationError {
 
-  final case class MacroException(exception: Throwable) extends DerivationError
-  final case class NotYetImplemented(what: String) extends DerivationError
-  final case class TransformerError(transformerDerivationError: TransformerDerivationError) extends DerivationError
-  final case class PatcherError(patcherDerivationError: PatcherDerivationError) extends DerivationError
+  final case class MacroException(exception: Throwable)
+      extends DerivationError(s"macro expansion thrown exception!: $exception")
+  final case class NotYetImplemented(what: String)
+      extends DerivationError(s"derivation failed because functionality $what is not yet implemented!")
+  final case class TransformerError(transformerDerivationError: TransformerDerivationError)
+      extends DerivationError(transformerDerivationError.toString)
+  final case class PatcherError(patcherDerivationError: PatcherDerivationError)
+      extends DerivationError(patcherDerivationError.toString)
+
+  /** Classifies an arbitrary `Throwable` caught by MIO as a [[DerivationError]] before rendering. */
+  def fromThrowable(error: Throwable): DerivationError = error match {
+    case derivationError: DerivationError => derivationError
+    case _                                => MacroException(error)
+  }
+
+  /** Renders MIO's raw errors - classifies each `Throwable` (see [[fromThrowable]]) before printing. */
+  def printErrors(errors: hearth.fp.effect.MErrors): String = printErrors(errors.toVector.map(fromThrowable))
 
   def printErrors(derivationErrors: Seq[DerivationError]): String =
     derivationErrors

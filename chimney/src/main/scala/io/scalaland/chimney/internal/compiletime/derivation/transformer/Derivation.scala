@@ -1,30 +1,75 @@
 package io.scalaland.chimney.internal.compiletime.derivation.transformer
 
-import io.scalaland.chimney.internal.compiletime.{datatypes, ChimneyDefinitions, DerivationResult}
+import hearth.fp.effect.{Log, MIO}
+import io.scalaland.chimney.internal.compiletime.{ChimneyDefinitions, DerivationError}
 
+/** Rule order in [[rulesAvailableForPlatform]] matters. NB: TransformPartialOptionToNonOptionRule and
+  * TransformToOptionRule have disjoint conditions at their pipeline position (target optional vs target non-optional),
+  * so their relative order is free.
+  */
 private[compiletime] trait Derivation
     extends ChimneyDefinitions
     with Configurations
     with Contexts
     with ImplicitSummoning
     with ResultOps
-    with datatypes.IterableOrArrays
-    with datatypes.ProductTypes
-    with datatypes.SealedHierarchies
-    with datatypes.SingletonTypes
-    with datatypes.ValueClasses
     with integrations.TotalOuterTransformers
     with integrations.PartialOuterTransformers
     with integrations.OptionalValues
     with integrations.PartiallyBuildIterables
     with integrations.TotallyBuildIterables
     with integrations.TotallyOrPartiallyBuildIterables
-    with rules.TransformationRules {
+    with ChimneyEngineExtensionApi
+    with rules.TransformationRules
+    with rules.TransformImplicitRuleModule
+    with rules.TransformImplicitPartialFallbackToTotalRuleModule
+    with rules.TransformImplicitOuterTransformerRuleModule
+    with rules.TransformImplicitConversionRuleModule
+    with rules.TransformSpecialCasedRuleModule
+    with rules.TransformSubtypesRuleModule
+    with rules.TransformTypeConstraintRuleModule
+    with rules.TransformToSingletonRuleModule
+    with rules.TransformValueClassToValueClassRuleModule
+    with rules.TransformValueClassToTypeRuleModule
+    with rules.TransformTypeToValueClassRuleModule
+    with rules.TransformOptionToOptionRuleModule
+    with rules.TransformPartialOptionToNonOptionRuleModule
+    with rules.TransformToOptionRuleModule
+    with rules.TransformEitherToEitherRuleModule
+    with rules.TransformMapToMapRuleModule
+    with rules.TransformIterableToIterableRuleModule
+    with rules.TransformProductToProductRuleModule
+    with rules.TransformSealedHierarchyToSealedHierarchyRuleModule {
+  this: hearth.MacroCommons & hearth.std.StdExtensions =>
+
+  override protected val rulesAvailableForPlatform: List[Rule] = List(
+    TransformImplicitRule,
+    TransformImplicitPartialFallbackToTotalRule,
+    TransformImplicitOuterTransformerRule,
+    TransformImplicitConversionRule,
+    // SPI: engine-aware ChimneyMacroExtension handlers. Below the implicit rules (user/integration implicits win),
+    // above the built-in structural rules (a registered handler beats Chimney's default derivation).
+    TransformSpecialCasedRule,
+    TransformSubtypesRule,
+    TransformTypeConstraintRule,
+    TransformToSingletonRule,
+    TransformValueClassToValueClassRule,
+    TransformValueClassToTypeRule,
+    TransformTypeToValueClassRule,
+    TransformOptionToOptionRule,
+    TransformPartialOptionToNonOptionRule,
+    TransformToOptionRule,
+    TransformEitherToEitherRule,
+    TransformMapToMapRule,
+    TransformIterableToIterableRule,
+    TransformProductToProductRule,
+    TransformSealedHierarchyToSealedHierarchyRule
+  )
 
   /** Intended use case: starting recursive derivation from Gateway */
   final protected def deriveTransformationResultExpr[From, To](implicit
       ctx: TransformationContext[From, To]
-  ): DerivationResult[TransformationExpr[To]] =
+  ): MIO[TransformationExpr[To]] =
     deriveTransformationResultExprUpdatingRules[From, To](identity)
 
   /** Intended use case: shared logic between what Gateway uses and recursive derivation uses */
@@ -32,8 +77,8 @@ private[compiletime] trait Derivation
       updateRules: List[Rule] => List[Rule]
   )(implicit
       ctx: TransformationContext[From, To]
-  ): DerivationResult[TransformationExpr[To]] =
-    DerivationResult.namedScope(
+  ): MIO[TransformationExpr[To]] =
+    Log.namedScope(
       ctx.fold(_ =>
         s"Deriving Total Transformer expression from ${Type.prettyPrint[From]} to ${Type.prettyPrint[To]} with context:\n$ctx"
       )(_ =>
@@ -50,14 +95,15 @@ private[compiletime] trait Derivation
       followTo: Path = Path.Root,
       updateFallbacks: TransformerOverride.ForFallback => Vector[TransformerOverride.ForFallback] = Vector(_),
       updateRules: List[Rule] => List[Rule] = identity
-  )(implicit ctx: TransformationContext[?, ?]): DerivationResult[TransformationExpr[NewTo]] = {
+  )(implicit ctx: TransformationContext[?, ?]): MIO[TransformationExpr[NewTo]] = {
     val newCtx: TransformationContext[NewFrom, NewTo] =
       ctx.updateFromTo[NewFrom, NewTo](newSrc, followFrom, followTo, updateFallbacks)
-    deriveTransformationResultExprUpdatingRules(updateRules)(newCtx)
-      .logSuccess {
+    deriveTransformationResultExprUpdatingRules(updateRules)(newCtx).log
+      .valueAsInfo {
         case TransformationExpr.TotalExpr(expr)   => s"Derived recursively total expression ${Expr.prettyPrint(expr)}"
         case TransformationExpr.PartialExpr(expr) => s"Derived recursively partial expression ${Expr.prettyPrint(expr)}"
       }
-      .logFailure(errors => s"Errors at recursive derivation: ${errors.prettyPrint}")
+      .log
+      .errorsAsInfo(errors => s"Errors at recursive derivation: ${DerivationError.printErrors(errors)}")
   }
 }

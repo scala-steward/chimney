@@ -2394,6 +2394,67 @@ We are also able to compute values in nested structure:
     // Right(value = NestedBar(bar = Bar(a = "value", b = 1248, c = 2496L)))
     ```
 
+#### Fail-fast-aware partial computations
+
+When using `.withFieldComputedPartial`, the provided function does not know whether the caller used `.transform` (which
+collects all errors) or `.transformFailFast` (which stops at the first error). In some cases the computation itself could
+benefit from this knowledge - for example, to skip expensive validations when fail-fast mode is already active, or to
+eagerly accumulate additional diagnostics when all errors are collected.
+
+`.withFieldComputedPartialFailFast` passes the `failFast` flag as an additional `Boolean` parameter to the function. The
+flag is `true` when `.transformFailFast` is used and `false` when `.transform` is used.
+`.withFieldComputedPartialFromFailFast` provides the same capability for computations that extract a value from the
+source first.
+
+!!! example
+
+    ```scala
+    //> using scala {{ scala.3 }}
+    //> using dep io.scalaland::chimney::{{ chimney_version() }}
+    //> using dep com.lihaoyi::pprint::{{ libraries.pprint }}
+    import io.scalaland.chimney.dsl._
+    import io.scalaland.chimney.partial
+
+    case class Foo(a: String, b: Int)
+    case class Bar(a: String, b: Int, c: Long)
+
+    // With transformFailFast, failFast is true:
+    pprint.pprintln(
+      Foo("value", 10)
+        .intoPartial[Bar]
+        .withFieldComputedPartialFailFast(_.c, (foo, failFast) =>
+          if (failFast) partial.Result.fromValue(foo.b.toLong) // skip extra work in fail-fast mode
+          else partial.Result.fromValue(foo.b.toLong * 2)      // do full computation otherwise
+        )
+        .transformFailFast
+        .asEither
+        .left
+        .map(_.asErrorPathMessages)
+    )
+    // expected output:
+    // Right(value = Bar(a = "value", b = 10, c = 10L))
+
+    // With transform, failFast is false:
+    pprint.pprintln(
+      Foo("value", 10)
+        .intoPartial[Bar]
+        .withFieldComputedPartialFailFast(_.c, (foo, failFast) =>
+          if (failFast) partial.Result.fromValue(foo.b.toLong)
+          else partial.Result.fromValue(foo.b.toLong * 2)
+        )
+        .transform
+        .asEither
+        .left
+        .map(_.asErrorPathMessages)
+    )
+    // expected output:
+    // Right(value = Bar(a = "value", b = 10, c = 20L))
+    ```
+
+Similarly, `.withSealedSubtypeHandledPartialFailFast` passes the `failFast` flag when handling sealed subtypes, and
+`.withConstructorPartialFailFast` passes it when wiring an entire constructor (as a curried `Boolean => partial.Result[To]`
+argument).
+
 ### Customizing field name matching
 
 Be default names are matched in a Java-Bean-aware way - `fieldName` would be considered a match for another `fieldName`
@@ -2534,6 +2595,134 @@ If the flag was enabled in the implicit config it can be disabled with `.disable
     //
     // Consult https://chimney.readthedocs.io for usage examples.
     ```
+
+### Applying overrides to all matching derivations (`forAll`)
+
+When transforming between deeply nested types, you may find yourself needing to apply the same field override at every
+level of the structure. For example, if an inner type has a renamed field, every derivation involving that inner type
+needs the same `.withFieldRenamed` call. Instead of manually using nested selectors like
+`.withFieldRenamed(_.a.name, _.a.imie)` for each path, you can use `.forAll[FromMatch, ToMatch]` to apply the
+override to **all** derivations where the source type matches `FromMatch` and the target type matches `ToMatch`:
+
+!!! example
+
+    Applying a field rename to all matching nested derivations with `forAll`
+
+    ```scala
+    //> using dep io.scalaland::chimney::{{ chimney_version() }}
+    //> using dep com.lihaoyi::pprint::{{ libraries.pprint }}
+    import io.scalaland.chimney.dsl._
+
+    case class Inner1(name: String, value: Int)
+    case class Inner2(imie: String, value: Int)
+    case class Outer1(a: Inner1, b: Inner1)
+    case class Outer2(a: Inner2, b: Inner2)
+
+    // Without forAll, you would need to rename for each field path separately:
+    //   .withFieldRenamed(_.a.name, _.a.imie)
+    //   .withFieldRenamed(_.b.name, _.b.imie)
+    // With forAll, a single rename applies to every Inner1 -> Inner2 derivation:
+    pprint.pprintln(
+      Outer1(Inner1("Kuba", 1), Inner1("Artur", 2))
+        .into[Outer2]
+        .forAll[Inner1, Inner2]
+        .withFieldRenamed(_.name, _.imie)
+        .transform
+    )
+    pprint.pprintln(
+      Outer1(Inner1("Kuba", 1), Inner1("Artur", 2))
+        .intoPartial[Outer2]
+        .forAll[Inner1, Inner2]
+        .withFieldRenamed(_.name, _.imie)
+        .transform
+        .asEither
+    )
+    // expected output:
+    // Outer2(a = Inner2(imie = "Kuba", value = 1), b = Inner2(imie = "Artur", value = 2))
+    // Right(value = Outer2(a = Inner2(imie = "Kuba", value = 1), b = Inner2(imie = "Artur", value = 2)))
+
+    import io.scalaland.chimney.Transformer
+
+    // forAll also works with Transformer.define:
+    val transformer: Transformer[Outer1, Outer2] = Transformer
+      .define[Outer1, Outer2]
+      .forAll[Inner1, Inner2]
+      .withFieldRenamed(_.name, _.imie)
+      .buildTransformer
+
+    pprint.pprintln(
+      transformer.transform(Outer1(Inner1("Kuba", 1), Inner1("Artur", 2)))
+    )
+    // expected output:
+    // Outer2(a = Inner2(imie = "Kuba", value = 1), b = Inner2(imie = "Artur", value = 2))
+    ```
+
+The scoped builder returned by `.forAll[FromMatch, ToMatch]` supports the following operations:
+
+  - `.withFieldRenamed(_.fromField, _.toField)` - use the source field to provide the value for the target field
+  - `.withFieldConst(_.field, value)` - use a constant value for the target field
+  - `.withFieldComputed(_.field, from => value)` - compute the value from the matched source instance
+  - `.withFieldComputedPartial(_.field, from => partial.Result[value])` - compute a partial result (only for
+    `PartialTransformer`)
+
+Each of these operations returns the original builder (e.g. `TransformerInto`, `TransformerDefinition`), so you can
+chain further overrides or flags after calling a `forAll` override.
+
+!!! example
+
+    Using `forAll` with `withFieldComputed` and deep nesting
+
+    ```scala
+    //> using dep io.scalaland::chimney::{{ chimney_version() }}
+    //> using dep com.lihaoyi::pprint::{{ libraries.pprint }}
+    import io.scalaland.chimney.Transformer
+    import io.scalaland.chimney.dsl._
+
+    // forAll propagates through arbitrarily deep nesting:
+    case class Inner1(name: String)
+    case class Inner2(imie: String)
+    case class Mid1(inner: Inner1)
+    case class Mid2(inner: Inner2)
+    case class Outer1(mid: Mid1)
+    case class Outer2(mid: Mid2)
+
+    pprint.pprintln(
+      Outer1(Mid1(Inner1("deep")))
+        .into[Outer2]
+        .forAll[Inner1, Inner2]
+        .withFieldRenamed(_.name, _.imie)
+        .transform
+    )
+    // expected output:
+    // Outer2(mid = Mid2(inner = Inner2(imie = "deep")))
+
+    // forAll with withFieldComputed:
+    case class Source(name: String, value: Int)
+    case class Target(name: String, value: Int, extra: String)
+    case class WrapperSrc(a: Source, b: Source)
+    case class WrapperDst(a: Target, b: Target)
+
+    val transformer: Transformer[WrapperSrc, WrapperDst] = Transformer
+      .define[WrapperSrc, WrapperDst]
+      .forAll[Source, Target]
+      .withFieldComputed(_.extra, src => s"${src.name}-${src.value}")
+      .buildTransformer
+
+    pprint.pprintln(
+      transformer.transform(WrapperSrc(Source("Kuba", 1), Source("Artur", 2)))
+    )
+    // expected output:
+    // WrapperDst(
+    //   a = Target(name = "Kuba", value = 1, extra = "Kuba-1"),
+    //   b = Target(name = "Artur", value = 2, extra = "Artur-2")
+    // )
+    ```
+
+!!! tip
+
+    The `forAll` override propagates into every level of nesting during recursive derivation. Whether the matching
+    types appear one level deep, three levels deep, or inside a collection, the override will be applied wherever
+    Chimney derives a transformation from a type matching `FromMatch` to a type matching `ToMatch`.
 
 ## From/into a `Tuple`
 
@@ -2720,6 +2909,13 @@ when the whole type `extends AnyVal`. What if we have a type which wraps a singl
 
 Such cases are often when we use ScalaPB, so it would be useful to automatically handle such cases. It's possible with
 a flag:
+
+!!! note
+
+    The flag guards only the **structural** matching described in this section (any single-public-`val` class).
+    Wrapper types registered via a [Hearth macro extension](cookbook.md#hearth-macro-extensions) - like the ScalaPB
+    well-known types from `chimney-protobufs` - do **not** need this flag: registering the provider was already an
+    explicit opt-in by the integration's author.
 
 !!! example
 
@@ -4012,10 +4208,8 @@ automatically only with `PartialTransformer`:
 
 !!! tip
 
-    Out of the box, Chimney supports only Scala's build-in `Option`s.
-    
-    If you need to integrate with Java's `Optional`, please, read about
-    [Java's collections integration](cookbook.md#java-collections-integration).
+    Out of the box, Chimney supports Scala's build-in `Option`s and (on the JVM, since 2.0.0) `java.util.Optional`
+    (see [Java's collections integration](cookbook.md#java-collections-integration)).
     
     If you need to provide support for your optional types, please, read about
     [custom optional types](cookbook.md#custom-optional-types).
@@ -4244,7 +4438,7 @@ know for sure is inside to their corresponding type in target `Either`:
 Every `Array`/every collection extending `scala.collection.Iterable` can be used as a source value for a collection's
 transformation.
 
-Every `Array`/every collection provided with `scala.collection.compat.Factory` can be used as a target type for a
+Every `Array`/every collection provided with `scala.collection.Factory` can be used as a target type for a
 collection's transformation.
 
 The requirement for a collection's transformation is that both source's and target's conditions are met and that
@@ -4320,13 +4514,12 @@ With `PartialTransformer`s ware able to handle fallible conversions, tracing at 
 
 !!! tip
 
-    Out of the box, Chimney supports only Scala's build-in collections, which are extending `Iterable` and have
-    `scala.collection.compat.Factory` provided as an implicit.
+    Out of the box, Chimney supports Scala's build-in collections, which are extending `Iterable` and have
+    `scala.collection.Factory` provided as an implicit, `Array`s and (on the JVM, since 2.0.0) `java.util`
+    collections (see [Java's collections integration](cookbook.md#java-collections-integration)).
     
-    If you need to integrate with Java's collections, please, read about
-    [Java's collections integration](cookbook.md#java-collections-integration).
-    
-    If you need to provide support for your collection types, you have to write your own implicit methods.
+    If you need to provide support for your collection types, please, read about
+    [custom collection types](cookbook.md#custom-collection-types).
 
 !!! tip
 

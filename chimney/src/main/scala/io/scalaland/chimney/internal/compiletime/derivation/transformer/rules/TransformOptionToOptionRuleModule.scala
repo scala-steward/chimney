@@ -1,28 +1,30 @@
 package io.scalaland.chimney.internal.compiletime.derivation.transformer.rules
 
+import hearth.fp.effect.{Log, MIO}
+import hearth.fp.instances.*
+import hearth.fp.syntax.*
 import io.scalaland.chimney.dsl as dsls
-import io.scalaland.chimney.internal.compiletime.DerivationResult
 import io.scalaland.chimney.internal.compiletime.derivation.transformer.Derivation
-import io.scalaland.chimney.internal.compiletime.fp.Implicits.*
 import io.scalaland.chimney.partial
 
 private[compiletime] trait TransformOptionToOptionRuleModule {
-  this: Derivation & TransformProductToProductRuleModule =>
+  this: Derivation & TransformProductToProductRuleModule & hearth.MacroCommons =>
 
-  import Type.Implicits.*, ChimneyType.Implicits.*, TransformProductToProductRule.useOverrideIfPresentOr
+  import ChimneyType.Implicits.*, TransformProductToProductRule.useOverrideIfPresentOr
 
   protected object TransformOptionToOptionRule extends Rule("OptionToOption") {
 
-    def expand[From, To](implicit ctx: TransformationContext[From, To]): DerivationResult[Rule.ExpansionResult[To]] =
+    private lazy val NoneType: Type[None.type] = Type.of[None.type]
+
+    def expand[From, To](implicit ctx: TransformationContext[From, To]): MIO[Rule.ExpansionResult[To]] =
       (Type[From], Type[To]) match {
-        case (OptionalValue(_), _) if Type[To] <:< Type[None.type] =>
-          DerivationResult
-            .notSupportedTransformerDerivation(ctx)
-            .log(s"Discovered that target type is ${Type.prettyPrint[None.type]} which we explicitly reject")
+        case (OptionalValue(_), _) if Type[To] <:< NoneType =>
+          notSupportedTransformerDerivation(ctx)
+            .logInfo(s"Discovered that target type is ${Type.prettyPrint(using NoneType)} which we explicitly reject")
         case (OptionalValue(from2), OptionalValue(to2)) =>
           import from2.{Underlying as InnerFrom, value as optionalFrom},
             to2.{Underlying as InnerTo, value as optionalTo}
-          DerivationResult.log(
+          Log.info(
             s"Resolved ${Type.prettyPrint[From]} (${from2.value}) and ${Type.prettyPrint[To]} (${to2.value}) as optional types"
           ) >> {
             def srcToResult = mapOptions[From, To, InnerFrom, InnerTo](optionalFrom, optionalTo)
@@ -43,10 +45,10 @@ private[compiletime] trait TransformOptionToOptionRuleModule {
                 srcToResult.parMap2(fallbackToResult)((srcTo, fallbackTo) =>
                   fallbackTo.reverseIterator.foldRight(srcTo)(merge)
                 )
-            }).flatMap(DerivationResult.expanded(_))
+            }).flatMap(expanded(_))
           }
         case _ =>
-          DerivationResult.attemptNextRule
+          attemptNextRule
       }
 
     private def mapOptions[From, To, InnerFrom: Type, InnerTo: Type](
@@ -54,9 +56,11 @@ private[compiletime] trait TransformOptionToOptionRuleModule {
         optionalTo: OptionalValue[To, InnerTo]
     )(implicit
         ctx: TransformationContext[From, To]
-    ): DerivationResult[TransformationExpr[To]] =
-      ExprPromise
-        .promise[InnerFrom](ExprPromise.NameGenerationStrategy.FromType)
+    ): MIO[TransformationExpr[To]] = {
+      implicit val SomeInnerFromType: Type[Some[InnerFrom]] = Type.of[Some[InnerFrom]]
+      implicit val SomeInnerToType: Type[Some[InnerTo]] = Type.of[Some[InnerTo]]
+      LambdaBuilder
+        .of1[InnerFrom]()
         .traverse { (newFromExpr: Expr[InnerFrom]) =>
           useOverrideIfPresentOr("matchingSome", ctx.config.filterCurrentOverridesForSome) {
             deriveRecursiveTransformationExpr[InnerFrom, InnerTo](
@@ -66,43 +70,42 @@ private[compiletime] trait TransformOptionToOptionRuleModule {
             )
           }
         }
-        .flatMap { (derivedToExprPromise: ExprPromise[InnerFrom, TransformationExpr[InnerTo]]) =>
-          derivedToExprPromise.foldTransformationExpr { (totalP: ExprPromise[InnerFrom, Expr[InnerTo]]) =>
+        .flatMap { (derivedToExprBuilder: LambdaBuilder[InnerFrom => *, TransformationExpr[InnerTo]]) =>
+          derivedToExprBuilder.foldTransformationExpr { (totalP: LambdaBuilder[InnerFrom => *, Expr[InnerTo]]) =>
             // We're constructing:
             // ${ src }.fold[$To](None, innerFrom: $InnerFrom => Some(${ innerFrom }))
             // but working with every OptionalValue
-            DerivationResult.totalExpr(
+            totalExpr(
               optionalFrom.fold[To](
                 ctx.src,
                 optionalTo.empty,
-                totalP.map(optionalTo.of).fulfilAsLambda[To]
+                totalP.map(optionalTo.of).build[To]
               )
             )
-          } { (partialP: ExprPromise[InnerFrom, Expr[partial.Result[InnerTo]]]) =>
+          } { (partialP: LambdaBuilder[InnerFrom => *, Expr[partial.Result[InnerTo]]]) =>
             // We're constructing:
             // ${ src }.fold[$To](partial.Result.Value(None)) { innerFrom: $InnerFrom =>
             //   ${ derivedResultInnerTo }.map(Option(_))
             // }
             // but working with every OptionalValue
-            DerivationResult.partialExpr(
+            partialExpr(
               optionalFrom.fold[partial.Result[To]](
                 ctx.src,
-                ChimneyExpr.PartialResult.Value(optionalTo.empty).upcastToExprOf[partial.Result[To]],
+                ChimneyExpr.PartialResult.Value(optionalTo.empty).upcast[partial.Result[To]],
                 partialP
                   .map { (derivedResultTo2: Expr[partial.Result[InnerTo]]) =>
-                    derivedResultTo2.map(Expr.Function1.instance { (param: Expr[InnerTo]) =>
-                      optionalTo.of(param)
-                    })
+                    derivedResultTo2.map(LambdaBuilder.of1[InnerTo]().map(optionalTo.of).build[To])
                   }
-                  .fulfilAsLambda[partial.Result[To]]
+                  .build[partial.Result[To]]
               )
             )
           }
         }
+    }
 
     private def mapFallbackOptions[From, To, InnerTo: Type](optionalTo: OptionalValue[To, InnerTo])(implicit
         ctx: TransformationContext[From, To]
-    ): DerivationResult[Vector[TransformationExpr[To]]] = ctx.config.filterCurrentOverridesForFallbacks.view
+    ): MIO[Vector[TransformationExpr[To]]] = ctx.config.filterCurrentOverridesForFallbacks.view
       .map { case TransformerOverride.Fallback(fallback) =>
         import fallback.{Underlying as Fallback, value as fallbackExpr}
         Type[Fallback] match {
@@ -134,7 +137,7 @@ private[compiletime] trait TransformOptionToOptionRuleModule {
           ChimneyExpr.PartialResult.map2(
             texpr1.ensurePartial,
             texpr2.ensurePartial,
-            Expr.Function2.instance(optionalTo.orElse(_, _)),
+            LambdaBuilder.of2[To, To]().buildWith { case (o1, o2) => optionalTo.orElse(o1, o2) },
             failFast
           )
         )

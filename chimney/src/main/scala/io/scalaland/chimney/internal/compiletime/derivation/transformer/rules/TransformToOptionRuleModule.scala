@@ -1,45 +1,62 @@
 package io.scalaland.chimney.internal.compiletime.derivation.transformer.rules
 
-import io.scalaland.chimney.internal.compiletime.DerivationResult
+import hearth.fp.effect.{Log, MIO}
 import io.scalaland.chimney.internal.compiletime.derivation.transformer.Derivation
 
-private[compiletime] trait TransformToOptionRuleModule { this: Derivation & TransformOptionToOptionRuleModule =>
+private[compiletime] trait TransformToOptionRuleModule {
+  this: Derivation & TransformOptionToOptionRuleModule & hearth.MacroCommons =>
 
-  import Type.Implicits.*
+  // Cross-quotes helpers in methods with regular type parameters (the cross-quotes helper-def pattern).
+
+  private def optionTypeCompat[A: Type]: Type[Option[A]] = Type.of[Option[A]]
+
+  private def optionExprCompat[A: Type](value: Expr[A]): Expr[Option[A]] = Expr.quote {
+    scala.Option[A](Expr.splice(value))
+  }
+
+  private def wrapFallbackOptionCompat[A: Type](value: Expr[A]): ExistentialExpr = {
+    implicit val OptionAType: Type[Option[A]] = optionTypeCompat[A]
+    optionExprCompat(value).as_??
+  }
 
   protected object TransformToOptionRule extends Rule("ToOption") {
 
-    def expand[From, To](implicit ctx: TransformationContext[From, To]): DerivationResult[Rule.ExpansionResult[To]] =
+    private lazy val NoneType: Type[None.type] = Type.of[None.type]
+
+    def expand[From, To](implicit ctx: TransformationContext[From, To]): MIO[Rule.ExpansionResult[To]] =
       Type[To] match {
-        case _ if Type[To] <:< Type[None.type] =>
-          DerivationResult
-            .notSupportedTransformerDerivation(ctx)
-            .log(s"Discovered that target type is ${Type.prettyPrint[None.type]} which we explicitly reject")
+        case _ if Type[To] <:< NoneType =>
+          notSupportedTransformerDerivation(ctx)
+            .logInfo(s"Discovered that target type is ${Type.prettyPrint(using NoneType)} which we explicitly reject")
         case OptionalValue(_) =>
-          DerivationResult.namedScope(s"Lifting ${Type.prettyPrint[From]} -> ${Type
-              .prettyPrint[To]} transformation into ${Type.prettyPrint[Option[From]]} -> ${Type.prettyPrint[To]}") {
+          Log.namedScope(
+            s"Lifting ${Type.prettyPrint[From]} -> ${Type
+                .prettyPrint[To]} transformation into ${Type.prettyPrint(using optionTypeCompat[From])} -> ${Type.prettyPrint[To]}"
+          ) {
             wrapInOptionAndTransform[From, To]
           }
         case _ =>
-          DerivationResult.attemptNextRule
+          attemptNextRule
       }
   }
 
   private def wrapInOptionAndTransform[From, To](implicit
       ctx: TransformationContext[From, To]
-  ): DerivationResult[Rule.ExpansionResult[To]] =
+  ): MIO[Rule.ExpansionResult[To]] = {
+    implicit val OptionFromType: Type[Option[From]] = optionTypeCompat[From]
     // We're constructing:
     // '{ ${ derivedTo2 } /* created from Option(src) */  }
     TransformOptionToOptionRule.expand(
-      ctx.updateFromTo[Option[From], To](Expr.Option(ctx.src), updateFallbacks = wrapFallbacks)
+      ctx.updateFromTo[Option[From], To](optionExprCompat(ctx.src), updateFallbacks = wrapFallbacks)
     )
+  }
 
   private val wrapFallbacks: TransformerOverride.ForFallback => Vector[TransformerOverride.ForFallback] = {
     case fb @ TransformerOverride.Fallback(fallback) =>
       import fallback.{Underlying as Fallback, value as fallbackExpr}
       Vector(Type[Fallback] match {
         case OptionalValue(_) => fb
-        case _                => TransformerOverride.Fallback(Expr.Option(fallbackExpr).as_??)
+        case _                => TransformerOverride.Fallback(wrapFallbackOptionCompat(fallbackExpr))
       })
   }
 }

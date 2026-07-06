@@ -86,8 +86,9 @@ Additionally, we would like to:
 ### How to start working on Chimney
 
 The first 2 things you need are JVM and sbt installed. There are many ways to manage their installations (jEnv, Sdkman,
-package managers) and we didn't impose any of them since, as a library, Chimney should work with any supported JDK,
-and sbt runner should fetch the right versions for the project on its own.
+package managers) and we didn't impose any of them since sbt runner should fetch the right versions for the project on
+its own. Mind the JDK baselines though: Chimney 2.x's Scala 2.13 artifacts target JDK 11+ (`-release 11`) and its
+Scala 3 artifacts target JDK 17+ (`-release 17`), so to build both you need at least JDK 17.
 
 Then you need to set up project in an IDE. We are using Intellij, and are using these two settings (`dev.properties`)
 to control which version we are working on currently:
@@ -155,9 +156,9 @@ You can check its name in:
 If you want to test changes that were not merged to `master` you can publish them you for yourself locally. For that
 open sbt and run `publishLocal` task for every artifact that you want to publish as a snapshot. Keep in mind that:
 
- * `chimney-macro-commons` is required for `chimney` to work
- * `chimney-cats`, `chimney-java-collections` and `chimney-protobufs` rely on `chimney`
- * `chimneyMacroCommons`, `chimney`, `chimneyCats`, etc. are versions with Scala 2.13 on JVM
+ * `chimney-cats` and `chimney-protobufs` rely on `chimney` (`chimney-java-collections` is a test-only module since
+   2.0.0 - `java.util` types are supported out of the box and there is nothing to publish)
+ * `chimney`, `chimneyCats`, etc. are versions with Scala 2.13 on JVM
  * versions for Scala Scala 3, Scala.js and Scala Native are NOT published by prepending `++` but by
    using a different suffix (`3`, `JS`, `Native`, see `projects` task to get a full list of projects) 
 
@@ -169,7 +170,7 @@ would follow to publish a new version of the library:
 1. Pre-release checks 
   - [ ] verify that all task in the milestone are finished (if a milestone for the release exists)
   - [ ] verify that all Scala Steward PRs are merged or manually replaced
-  - [ ] verify that chimney-macro-commons is **not** on RC version
+  - [ ] verify that hearth is **not** on RC/snapshot version
   - [ ] wait for the `master` to build and pass all tests, ensure that they are all green
   - [ ] search `TODO`s in the code and verify that they are not problematic (no missing documentation links for instance)
   - [ ] verify that docs from the latest build are rendering correctly (on RTD or `cd docs && just serve`)

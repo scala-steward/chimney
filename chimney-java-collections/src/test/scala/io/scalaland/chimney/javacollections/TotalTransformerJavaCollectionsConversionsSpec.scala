@@ -9,6 +9,10 @@ import scala.collection.immutable.{ListMap, ListSet, SortedMap}
 import scala.jdk.CollectionConverters.*
 import scala.jdk.StreamConverters.*
 
+/** Since 2.0.0 there are NO `io.scalaland.chimney.javacollections` implicits - this suite proves that every `java.util`
+  * type they used to provide is served by Hearth's built-in std-extension providers through the engine's
+  * extension-fallback layer, WITHOUT any import.
+  */
 class TotalTransformerJavaCollectionsConversionsSpec extends ChimneySpec {
 
   implicit private val intToString: Transformer[Int, String] = _.toString
@@ -120,11 +124,15 @@ class TotalTransformerJavaCollectionsConversionsSpec extends ChimneySpec {
       input.transformInto[ju.SortedMap[String, String]].asScala.toList ==> outputSorted
       input.transformInto[ju.NavigableMap[String, String]].asScala.toList ==> outputSorted
       input.transformInto[ju.HashMap[String, String]].asScala ==> outputUnstable
+      input.transformInto[ju.IdentityHashMap[String, String]].asScala.toMap ==> outputUnstable
+      input.transformInto[ju.WeakHashMap[String, String]].asScala.toMap ==> outputUnstable
       input.transformInto[ju.LinkedHashMap[String, String]].asScala.toList ==> outputStable
       input.transformInto[ju.TreeMap[String, String]].asScala.toList ==> outputSorted
     }
 
     test("to java.lang.Enum-supporting types") {
+      import java.util.concurrent.TimeUnit
+
       Set(JavaEnum.Blue, JavaEnum.Green, JavaEnum.Red).transformInto[ju.EnumSet[JavaEnum]].asScala ==> Set(
         JavaEnum.Blue,
         JavaEnum.Green,
@@ -133,15 +141,21 @@ class TotalTransformerJavaCollectionsConversionsSpec extends ChimneySpec {
 
       // identity transformation of inner type:
 
-      Map(JavaEnum.Blue -> 3, JavaEnum.Green -> 2, JavaEnum.Red -> 1)
-        .transformInto[ju.EnumMap[JavaEnum, Int]]
-        .asScala ==> Map(JavaEnum.Blue -> 3, JavaEnum.Green -> 2, JavaEnum.Red -> 1)
+      Map(TimeUnit.SECONDS -> 3, TimeUnit.MINUTES -> 2, TimeUnit.HOURS -> 1)
+        .transformInto[ju.EnumMap[TimeUnit, Int]]
+        .asScala ==> Map(TimeUnit.SECONDS -> 3, TimeUnit.MINUTES -> 2, TimeUnit.HOURS -> 1)
 
       // provided transformation of inner type:
 
-      Map(JavaEnum.Blue -> 3, JavaEnum.Green -> 2, JavaEnum.Red -> 1)
-        .transformInto[ju.EnumMap[JavaEnum, String]]
-        .asScala ==> Map(JavaEnum.Blue -> "3", JavaEnum.Green -> "2", JavaEnum.Red -> "1")
+      Map(TimeUnit.SECONDS -> 3, TimeUnit.MINUTES -> 2, TimeUnit.HOURS -> 1)
+        .transformInto[ju.EnumMap[TimeUnit, String]]
+        .asScala ==> Map(TimeUnit.SECONDS -> "3", TimeUnit.MINUTES -> "2", TimeUnit.HOURS -> "1")
+    }
+
+    test("to java.util.EnumMap of a SAME-COMPILATION-UNIT enum works (hearth#323 fixed: symbolic enum detection)") {
+      // Used to be a pinned Hearth 0.4.0 limitation (macro-time `Class.forName` gating of the EnumMap provider
+      // branch); since hearth#323 the detection is symbolic, so same-unit enums work like pre-compiled ones.
+      Map(JavaEnum.Red -> 1).transformInto[ju.EnumMap[JavaEnum, Int]].asScala ==> Map(JavaEnum.Red -> 1)
     }
 
     test("to java.util.BitSet type") {
@@ -318,20 +332,33 @@ class TotalTransformerJavaCollectionsConversionsSpec extends ChimneySpec {
     }
 
     test("from java.lang.Enum-supporting type") {
+      import java.util.concurrent.TimeUnit
+
       val enumSet = ju.EnumSet.allOf(classOf[JavaEnum])
       enumSet.transformInto[Set[JavaEnum]] ==> Set(JavaEnum.Red, JavaEnum.Green, JavaEnum.Blue)
 
-      val enumMap = new ju.EnumMap[JavaEnum, Int](classOf[JavaEnum])
-      JavaEnum.values().foreach(e => enumMap.put(e, e.ordinal()))
+      // NOTE: TimeUnit instead of JavaEnum - Hearth's EnumMap provider only matches ALREADY-COMPILED enums (see the
+      // same-compilation-unit pin in the first group).
+      val enumMap = new ju.EnumMap[TimeUnit, Int](classOf[TimeUnit])
+      enumMap.put(TimeUnit.SECONDS, 0)
+      enumMap.put(TimeUnit.MINUTES, 1)
+      enumMap.put(TimeUnit.HOURS, 2)
 
       // identity transformation of inner type:
 
-      enumMap.transformInto[Map[JavaEnum, Int]] ==> Map(JavaEnum.Red -> 0, JavaEnum.Green -> 1, JavaEnum.Blue -> 2)
+      enumMap.transformInto[Map[TimeUnit, Int]] ==> Map(
+        TimeUnit.SECONDS -> 0,
+        TimeUnit.MINUTES -> 1,
+        TimeUnit.HOURS -> 2
+      )
 
       // provided transformation of inner type:
 
-      enumMap
-        .transformInto[Map[JavaEnum, String]] ==> Map(JavaEnum.Red -> "0", JavaEnum.Green -> "1", JavaEnum.Blue -> "2")
+      enumMap.transformInto[Map[TimeUnit, String]] ==> Map(
+        TimeUnit.SECONDS -> "0",
+        TimeUnit.MINUTES -> "1",
+        TimeUnit.HOURS -> "2"
+      )
     }
 
     test("from java.util.BitSet type") {

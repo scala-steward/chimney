@@ -17,10 +17,10 @@ jobs:
     name: Check formatting
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: coursier/setup-action@v2.0.3
+      - uses: coursier/setup-action@v3.0.0
         with:
           apps: scalafmt
       - name: Check code and docs formatting
@@ -34,15 +34,23 @@ jobs:
     name: Check Scala CLI snippets from documentation
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: extractions/setup-just@v3
-      - uses: coursier/setup-action@v2.0.3
+      - uses: extractions/setup-just@v4
+      - uses: coursier/setup-action@v3.0.0
         with:
+          # publish-local-for-tests builds Scala 3 artifacts with -release 17 (Scala 2.13 uses -release 11),
+          # so the snippets job needs JDK 17+ - don't rely on the runner's default JVM.
+          jvm: 'temurin:17'
           apps: scala-cli sbt
       - name: Run snippets from documentation
         working-directory: docs
+        # TODO(hearth-release): drop COURSIER_REPOSITORIES once versions.hearth is a released Hearth. While it is a
+        # SNAPSHOT, the snippets' scala-cli builds resolve chimney -> hearth SNAPSHOT, which is not on Central releases;
+        # this points coursier at ivy2local (publish-local-for-tests) + Central releases + Central snapshots.
+        env:
+          COURSIER_REPOSITORIES: "ivy2Local|central|https://central.sonatype.com/repository/maven-snapshots"
         run: just test-snippets
 
   build:
@@ -56,20 +64,29 @@ jobs:
       matrix:
         scala: ["2_13", "3"]
         platform: ["jvm", "js", "native"]
-        jvm: ['temurin:1.8.0-392', 'temurin:1.21.0.1']
+        # Chimney 2.x JDK baselines: Scala 2.13 targets JDK 11+ (-release 11), Scala 3 targets JDK 17+ (-release 17) -
+        # each Scala version is tested on its minimum plus the latest LTS.
+        jvm: ['temurin:11', 'temurin:1.21.0.1']
+        exclude:
+          - scala: "3"
+            jvm: 'temurin:11'
+        include:
+          - { scala: "3", platform: "jvm", jvm: 'temurin:17' }
+          - { scala: "3", platform: "js", jvm: 'temurin:17' }
+          - { scala: "3", platform: "native", jvm: 'temurin:17' }
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: coursier/cache-action@v8
-      - uses: coursier/setup-action@v2.0.3
+      - uses: coursier/setup-action@v3.0.0
         with:
           jvm: ${{ matrix.jvm }}
           apps: sbt
       - name: Clean, compile, test, generate coverage report, check MiMa
         run: sbt ci-${{ matrix.platform }}-${{ matrix.scala }}
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

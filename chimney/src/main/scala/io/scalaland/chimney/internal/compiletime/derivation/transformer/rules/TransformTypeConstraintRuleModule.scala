@@ -1,29 +1,40 @@
 package io.scalaland.chimney.internal.compiletime.derivation.transformer.rules
 
-import io.scalaland.chimney.internal.compiletime.DerivationResult
+import hearth.fp.effect.MIO
 import io.scalaland.chimney.internal.compiletime.derivation.transformer.Derivation
 
-private[compiletime] trait TransformTypeConstraintRuleModule { this: Derivation =>
-
-  import Type.Implicits.*
+private[compiletime] trait TransformTypeConstraintRuleModule { this: Derivation & hearth.MacroCommons =>
 
   protected object TransformTypeConstraintRule extends Rule("TypeConstraint") {
 
-    def expand[From, To](implicit ctx: TransformationContext[From, To]): DerivationResult[Rule.ExpansionResult[To]] =
+    // Cross-quotes helper in a method with regular type parameters (the cross-quotes helper-def pattern).
+    private def applyFnCompat[A: Type, B: Type](fn: Expr[A => B], a: Expr[A]): Expr[B] = Expr.quote {
+      Expr.splice(fn).apply(Expr.splice(a))
+    }
+
+    def expand[From, To](implicit ctx: TransformationContext[From, To]): MIO[Rule.ExpansionResult[To]] =
       if (ctx.config.areLocalFlagsAndOverridesEmpty) {
         if (ctx.config.flags.typeConstraintEvidence && !(Type[From] <:< Type[To])) {
-          Expr.summonImplicit[From <:< To] match {
+          summonEvidence[From, To] match {
             case Some(ev) => transformWithEvidence[From, To](ev)
-            case None     => DerivationResult.attemptNextRule
+            case None     => attemptNextRule
           }
-        } else DerivationResult.attemptNextRuleBecause("<:< evidence is disabled")
-      } else DerivationResult.attemptNextRuleBecause("Configuration has defined overrides")
+        } else attemptNextRuleBecause("<:< evidence is disabled")
+      } else attemptNextRuleBecause("Configuration has defined overrides")
 
-    private def transformWithEvidence[From, To](ev: Expr[From <:< To])(implicit
+    private def summonEvidence[From: Type, To: Type]: Option[Expr[From <:< To]] = {
+      implicit val EvidenceType: Type[From <:< To] = Type.of[From <:< To]
+      summonImplicitOptionOf[From <:< To]
+    }
+
+    private def transformWithEvidence[From: Type, To: Type](ev: Expr[From <:< To])(implicit
         ctx: TransformationContext[From, To]
-    ): DerivationResult[Rule.ExpansionResult[To]] =
+    ): MIO[Rule.ExpansionResult[To]] = {
+      implicit val EvidenceType: Type[From <:< To] = Type.of[From <:< To]
+      implicit val FnFromToType: Type[From => To] = Type.of[From => To]
       // We're constructing:
       // '{ ${ ev }.apply(${ src }) }
-      DerivationResult.expandedTotal(ev.upcastToExprOf[From => To].apply(ctx.src))
+      expandedTotal(applyFnCompat(ev.upcast[From => To], ctx.src))
+    }
   }
 }

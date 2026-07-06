@@ -1,13 +1,14 @@
 package io.scalaland.chimney.internal.compiletime.derivation.codec
 
 import io.scalaland.chimney.dsl.CodecDefinition
-import io.scalaland.chimney.internal.compiletime.derivation.transformer.{DerivationPlatform, Gateway}
+import io.scalaland.chimney.internal.compiletime.PlatformBridge
+import io.scalaland.chimney.internal.compiletime.derivation.transformer.{Derivation, Gateway}
 import io.scalaland.chimney.Codec
 import io.scalaland.chimney.internal.runtime
 
 import scala.quoted.{Expr, Quotes, Type}
 
-final class CodecMacros(q: Quotes) extends DerivationPlatform(q) with Gateway {
+final class CodecMacros(q: Quotes) extends PlatformBridge(q) with Derivation with Gateway {
 
   import quotes.*, quotes.reflect.*
 
@@ -66,7 +67,7 @@ final class CodecMacros(q: Quotes) extends DerivationPlatform(q) with Gateway {
     }
 
   private def resolveImplicitScopeConfigAndMuteUnusedWarnings[A: Type](
-      useImplicitScopeFlags: ?<[runtime.TransformerFlags] => Expr[A]
+      useImplicitScopeFlags: ??<:[runtime.TransformerFlags] => Expr[A]
   ): Expr[A] = {
     val implicitScopeConfig = scala.quoted.Expr
       .summon[io.scalaland.chimney.dsl.TransformerConfiguration[? <: runtime.TransformerFlags]]
@@ -77,10 +78,9 @@ final class CodecMacros(q: Quotes) extends DerivationPlatform(q) with Gateway {
       }
     val implicitScopeFlagsType = implicitScopeConfig.asTerm.tpe.widen.typeArgs.head.asType
       .asInstanceOf[Type[runtime.TransformerFlags]]
-      .as_?<[runtime.TransformerFlags]
+      .as_??<:[runtime.TransformerFlags]
 
-    Expr.block(
-      List(Expr.suppressUnused(implicitScopeConfig)),
+    prependSuppressUnused(List(Expr.suppressUnused(implicitScopeConfig)))(
       useImplicitScopeFlags(implicitScopeFlagsType)
     )
   }

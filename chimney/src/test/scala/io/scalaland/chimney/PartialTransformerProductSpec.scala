@@ -1300,6 +1300,90 @@ class PartialTransformerProductSpec extends ChimneySpec {
     }
   }
 
+  group("setting .withFieldComputedPartialFailFast(_.field, (source, failFast) => value)") {
+
+    test("should pass failFast=true when using transformFailFast") {
+      import products.{Foo, Bar}
+
+      var receivedFailFast: Option[Boolean] = None
+
+      val result = Bar(3, (3.14, 3.14))
+        .intoPartial[Foo]
+        .withFieldComputedPartialFailFast(
+          _.y,
+          (bar, failFast) => {
+            receivedFailFast = Some(failFast)
+            partial.Result.fromValue(bar.x.toString)
+          }
+        )
+        .transformFailFast
+      result.asOption ==> Some(Foo(3, "3", (3.14, 3.14)))
+      receivedFailFast ==> Some(true)
+    }
+
+    test("should pass failFast=false when using transform") {
+      import products.{Foo, Bar}
+
+      var receivedFailFast: Option[Boolean] = None
+
+      val result = Bar(3, (3.14, 3.14))
+        .intoPartial[Foo]
+        .withFieldComputedPartialFailFast(
+          _.y,
+          (bar, failFast) => {
+            receivedFailFast = Some(failFast)
+            partial.Result.fromValue(bar.x.toString)
+          }
+        )
+        .transform
+      result.asOption ==> Some(Foo(3, "3", (3.14, 3.14)))
+      receivedFailFast ==> Some(false)
+    }
+
+    test("should work with PartialTransformer.define") {
+      import products.{Foo, Bar}
+
+      var receivedFailFast: Option[Boolean] = None
+
+      val transformer = PartialTransformer
+        .define[Bar, Foo]
+        .withFieldComputedPartialFailFast(
+          _.y,
+          (bar, failFast) => {
+            receivedFailFast = Some(failFast)
+            partial.Result.fromValue(bar.x.toString)
+          }
+        )
+        .buildTransformer
+
+      val result = transformer.transform(Bar(3, (3.14, 3.14)), failFast = true)
+      result.asOption ==> Some(Foo(3, "3", (3.14, 3.14)))
+      receivedFailFast ==> Some(true)
+    }
+  }
+
+  group("setting .withFieldComputedPartialFromFailFast(_.from)(_.to, (source, failFast) => value)") {
+
+    test("should pass failFast correctly") {
+      import products.{Foo, Bar}
+
+      var receivedFailFast: Option[Boolean] = None
+
+      val result = Bar(3, (3.14, 3.14))
+        .intoPartial[Foo]
+        .withFieldComputedPartialFromFailFast(_.x)(
+          _.y,
+          (x, failFast) => {
+            receivedFailFast = Some(failFast)
+            partial.Result.fromValue(x.toString)
+          }
+        )
+        .transformFailFast
+      result.asOption ==> Some(Foo(3, "3", (3.14, 3.14)))
+      receivedFailFast ==> Some(true)
+    }
+  }
+
   group("""setting .withFieldRenamed(_.from, _.to)""") {
 
     test("should not be enabled by default") {
@@ -2555,7 +2639,7 @@ class PartialTransformerProductSpec extends ChimneySpec {
       compileErrors("""Foo(Foo.Baz("test"), 1024).transformIntoPartial[Bar]""").check(
         "Chimney can't derive transformation from io.scalaland.chimney.PartialTransformerProductSpec.Foo to io.scalaland.chimney.PartialTransformerProductSpec.Bar",
         "io.scalaland.chimney.PartialTransformerProductSpec.Bar",
-        "  baz: io.scalaland.chimney.PartialTransformerProductSpec.Bar.Baz - no accessor named baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
+        "Bar.Baz - no accessor named baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
         "  a: scala.Int - no accessor named a in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
         "Consult https://chimney.readthedocs.io for usage examples."
       )
@@ -2563,7 +2647,7 @@ class PartialTransformerProductSpec extends ChimneySpec {
       compileErrors("""Foo(Foo.Baz("test"), 1024).intoPartial[Bar].transform""").check(
         "Chimney can't derive transformation from io.scalaland.chimney.PartialTransformerProductSpec.Foo to io.scalaland.chimney.PartialTransformerProductSpec.Bar",
         "io.scalaland.chimney.PartialTransformerProductSpec.Bar",
-        "  baz: io.scalaland.chimney.PartialTransformerProductSpec.Bar.Baz - no accessor named baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
+        "Bar.Baz - no accessor named baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
         "  a: scala.Int - no accessor named a in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
         "Consult https://chimney.readthedocs.io for usage examples."
       )
@@ -2571,7 +2655,7 @@ class PartialTransformerProductSpec extends ChimneySpec {
       compileErrors("""Bar(Bar.Baz("test"), 1024).transformIntoPartial[Foo]""").check(
         "Chimney can't derive transformation from io.scalaland.chimney.PartialTransformerProductSpec.Bar to io.scalaland.chimney.PartialTransformerProductSpec.Foo",
         "io.scalaland.chimney.PartialTransformerProductSpec.Foo",
-        "  Baz: io.scalaland.chimney.PartialTransformerProductSpec.Foo.Baz - no accessor named Baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
+        "Foo.Baz - no accessor named Baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
         "  A: scala.Int - no accessor named A in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
         "Consult https://chimney.readthedocs.io for usage examples."
       )
@@ -2579,7 +2663,7 @@ class PartialTransformerProductSpec extends ChimneySpec {
       compileErrors("""Bar(Bar.Baz("test"), 1024).intoPartial[Foo].transform""").check(
         "Chimney can't derive transformation from io.scalaland.chimney.PartialTransformerProductSpec.Bar to io.scalaland.chimney.PartialTransformerProductSpec.Foo",
         "io.scalaland.chimney.PartialTransformerProductSpec.Foo",
-        "  Baz: io.scalaland.chimney.PartialTransformerProductSpec.Foo.Baz - no accessor named Baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
+        "Foo.Baz - no accessor named Baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
         "  A: scala.Int - no accessor named A in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
         "Consult https://chimney.readthedocs.io for usage examples."
       )
@@ -2595,7 +2679,8 @@ class PartialTransformerProductSpec extends ChimneySpec {
         """Foo(Foo.Baz("test"), 1024).intoPartial[Bar].enableCustomFieldNameComparison(BadNameComparison).transform"""
       )
         .check(
-          "Invalid TransformerNamesComparison type - only (case) objects are allowed, and only the ones defined as top-level or in top-level objects, got: io.scalaland.chimney.PartialTransformerProductSpec.BadNameComparison!!!"
+          "Invalid TransformerNamesComparison type - only (case) objects are allowed, and only the ones defined as top-level or in top-level objects, got: ",
+          "BadNameComparison.type!!!"
         )
     }
 
@@ -2622,10 +2707,12 @@ class PartialTransformerProductSpec extends ChimneySpec {
         .check(
           "Chimney can't derive transformation from io.scalaland.chimney.PartialTransformerProductSpec.FooAmbiguous to io.scalaland.chimney.PartialTransformerProductSpec.Bar",
           "io.scalaland.chimney.PartialTransformerProductSpec.Bar",
-          "  baz: io.scalaland.chimney.PartialTransformerProductSpec.Bar.Baz - can't derive transformation from baz: io.scalaland.chimney.PartialTransformerProductSpec.FooAmbiguous.Baz in source type io.scalaland.chimney.PartialTransformerProductSpec.FooAmbiguous",
+          "Bar.Baz - can't derive transformation from baz: ",
+          "FooAmbiguous.Baz in source type io.scalaland.chimney.PartialTransformerProductSpec.FooAmbiguous",
           "  field a: io.scalaland.chimney.PartialTransformerProductSpec.Bar has ambiguous matches in io.scalaland.chimney.PartialTransformerProductSpec.FooAmbiguous: A, a",
-          "io.scalaland.chimney.PartialTransformerProductSpec.Bar.Baz (transforming from: baz into: baz)",
-          "  field s: io.scalaland.chimney.PartialTransformerProductSpec.Bar.Baz has ambiguous matches in io.scalaland.chimney.PartialTransformerProductSpec.FooAmbiguous.Baz: S, s",
+          "Bar.Baz (transforming from: baz into: baz)",
+          "Bar.Baz has ambiguous matches in ",
+          "FooAmbiguous.Baz: S, s",
           "Consult https://chimney.readthedocs.io for usage examples."
         )
     }
@@ -2759,7 +2846,7 @@ class PartialTransformerProductSpec extends ChimneySpec {
         .check(
           "Chimney can't derive transformation from io.scalaland.chimney.PartialTransformerProductSpec.Foo to io.scalaland.chimney.PartialTransformerProductSpec.Bar",
           "io.scalaland.chimney.PartialTransformerProductSpec.Bar",
-          "  baz: io.scalaland.chimney.PartialTransformerProductSpec.Bar.Baz - no accessor named baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
+          "Bar.Baz - no accessor named baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
           "  a: scala.Int - no accessor named a in source type io.scalaland.chimney.PartialTransformerProductSpec.Foo",
           "Consult https://chimney.readthedocs.io for usage examples."
         )
@@ -2768,7 +2855,7 @@ class PartialTransformerProductSpec extends ChimneySpec {
         .check(
           "Chimney can't derive transformation from io.scalaland.chimney.PartialTransformerProductSpec.Bar to io.scalaland.chimney.PartialTransformerProductSpec.Foo",
           "io.scalaland.chimney.PartialTransformerProductSpec.Foo",
-          "  Baz: io.scalaland.chimney.PartialTransformerProductSpec.Foo.Baz - no accessor named Baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
+          "Foo.Baz - no accessor named Baz in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
           "  A: scala.Int - no accessor named A in source type io.scalaland.chimney.PartialTransformerProductSpec.Bar",
           "Consult https://chimney.readthedocs.io for usage examples."
         )

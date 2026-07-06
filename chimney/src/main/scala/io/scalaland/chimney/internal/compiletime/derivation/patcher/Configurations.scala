@@ -4,9 +4,11 @@ import io.scalaland.chimney.dsl.TransformerDefinitionCommons
 import io.scalaland.chimney.dsl as dsls
 import io.scalaland.chimney.internal.runtime
 
-private[compiletime] trait Configurations { this: Derivation =>
+private[compiletime] trait Configurations { this: Derivation & hearth.MacroCommons =>
 
-  import Type.Implicits.*
+  // Not implicit, passed explicitly at the call sites that need it (the hearth#316 sibling-implicit-lazy-Type
+  // deadlock this guarded against is fixed since 0.4.1 - kept explicit to avoid ambient-implicit ambiguity).
+  private lazy val AnyType: Type[Any] = Type.of[Any]
 
   final protected case class PatcherFlags(
       ignoreNoneInPatch: Boolean = false,
@@ -87,12 +89,12 @@ private[compiletime] trait Configurations { this: Derivation =>
     }
 
     final case class Const(runtimeData: ExistentialExpr) extends PatcherOverride {
-      override def toString: String = s"Const(${ExistentialExpr.prettyPrint(runtimeData)})"
+      override def toString: String = s"Const(${runtimeData.prettyPrint})"
     }
 
     final case class Computed(sourcePath: Path, targetPath: Path, runtimeData: ExistentialExpr)
         extends PatcherOverride {
-      override def toString: String = s"Computed($sourcePath, $targetPath, ${ExistentialExpr.prettyPrint(runtimeData)})"
+      override def toString: String = s"Computed($sourcePath, $targetPath, ${runtimeData.prettyPrint})"
     }
   }
 
@@ -154,7 +156,7 @@ private[compiletime] trait Configurations { this: Derivation =>
 
     override def toString: String = {
       val preventImplicitSummoningForTypesString = preventImplicitSummoningForTypes.map { case (f, t) =>
-        s"(${ExistentialType.prettyPrint(f)}, ${ExistentialType.prettyPrint(t)})"
+        s"(${f.prettyPrint}, ${t.prettyPrint})"
       }.toString
       s"""PatcherConfig(
          |  flags = $flags,
@@ -225,7 +227,7 @@ private[compiletime] trait Configurations { this: Derivation =>
           import objPath.Underlying as ObjPath, cfg.Underlying as Tail2
           extractPatcherConfig[Tail2](1 + runtimeDataIdx, runtimeDataStore).addPatcherOverride(
             TargetPath(extractPath[ObjPath]),
-            PatcherOverride.Const(runtimeDataStore(runtimeDataIdx).as_??)
+            PatcherOverride.Const(runtimeDataStore(runtimeDataIdx).as_??(using AnyType))
           )
         case ChimneyType.PatcherOverrides.Computed(patchPath, objPath, cfg) =>
           import patchPath.Underlying as PatchPath, objPath.Underlying as ObjPath, cfg.Underlying as Tail2
@@ -234,7 +236,7 @@ private[compiletime] trait Configurations { this: Derivation =>
           extractPatcherConfig[Tail2](1 + runtimeDataIdx, runtimeDataStore).addPatcherOverride(
             sourcePath,
             targetPath,
-            PatcherOverride.Computed(sourcePath, targetPath, runtimeDataStore(runtimeDataIdx).as_??)
+            PatcherOverride.Computed(sourcePath, targetPath, runtimeDataStore(runtimeDataIdx).as_??(using AnyType))
           )
         // $COVERAGE-OFF$should never happen unless someone mess around with type-level representation
         case _ =>

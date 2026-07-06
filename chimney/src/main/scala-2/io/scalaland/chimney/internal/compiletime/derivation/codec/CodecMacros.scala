@@ -2,12 +2,13 @@ package io.scalaland.chimney.internal.compiletime.derivation.codec
 
 import io.scalaland.chimney.dsl
 import io.scalaland.chimney.Codec
-import io.scalaland.chimney.internal.compiletime.derivation.transformer.{DerivationPlatform, Gateway}
+import io.scalaland.chimney.internal.compiletime.PlatformBridge
+import io.scalaland.chimney.internal.compiletime.derivation.transformer.{Derivation, Gateway}
 import io.scalaland.chimney.internal.runtime
 
 import scala.reflect.macros.blackbox
 
-final class CodecMacros(val c: blackbox.Context) extends DerivationPlatform with Gateway {
+final class CodecMacros(ctx: blackbox.Context) extends PlatformBridge(ctx) with Derivation with Gateway {
 
   import c.universe.{internal as _, Transformer as _, *}
 
@@ -49,44 +50,42 @@ final class CodecMacros(val c: blackbox.Context) extends DerivationPlatform with
       ImplicitScopeFlags <: runtime.TransformerFlags: WeakTypeTag
   ](
       tc: Expr[io.scalaland.chimney.dsl.TransformerConfiguration[ImplicitScopeFlags]]
-  ): Expr[Codec[Domain, Dto]] = retypecheck(
-    Expr.block(
-      List(Expr.suppressUnused(tc)),
-      c.Expr(
-        q"""
+  ): Expr[Codec[Domain, Dto]] = retypecheck {
+    val codec = c.Expr[Codec[Domain, Dto]](
+      q"""
         io.scalaland.chimney.Codec[${Type[Domain]}, ${Type[Dto]}](
           encode = ${deriveTotalTransformer[
-            Domain,
-            Dto,
-            EncodeOverrides,
-            InstanceFlags,
-            ImplicitScopeFlags
-          ](
-            // Called by CodecDefinition => prefix is CodecDefinition
-            c.Expr[dsl.TransformerDefinitionCommons.RuntimeDataStore](q"${c.prefix.tree}.encode.runtimeData")
-          )},
+          Domain,
+          Dto,
+          EncodeOverrides,
+          InstanceFlags,
+          ImplicitScopeFlags
+        ](
+          // Called by CodecDefinition => prefix is CodecDefinition
+          c.Expr[dsl.TransformerDefinitionCommons.RuntimeDataStore](q"${c.prefix.tree}.encode.runtimeData")
+        )},
           decode = ${derivePartialTransformer[
-            Dto,
-            Domain,
-            DecodeOverrides,
-            InstanceFlags,
-            ImplicitScopeFlags
-          ](
-            // Called by CodecDefinition => prefix is CodecDefinition
-            c.Expr[dsl.TransformerDefinitionCommons.RuntimeDataStore](q"${c.prefix.tree}.decode.runtimeData")
-          )}
+          Dto,
+          Domain,
+          DecodeOverrides,
+          InstanceFlags,
+          ImplicitScopeFlags
+        ](
+          // Called by CodecDefinition => prefix is CodecDefinition
+          c.Expr[dsl.TransformerDefinitionCommons.RuntimeDataStore](q"${c.prefix.tree}.decode.runtimeData")
+        )}
         )
         """
-      )
     )
-  )
+    c.Expr[Codec[Domain, Dto]](q"{ ${Expr.suppressUnused(tc)}; $codec }")
+  }
 
   private def resolveImplicitScopeConfigAndMuteUnusedWarnings[A: Type](
-      useImplicitScopeFlags: ?<[runtime.TransformerFlags] => Expr[A]
+      useImplicitScopeFlags: ??<:[runtime.TransformerFlags] => Expr[A]
   ): Expr[A] = {
     val implicitScopeConfig = {
-      val transformerConfigurationType = Type.platformSpecific
-        .fromUntyped[io.scalaland.chimney.dsl.TransformerConfiguration[? <: runtime.TransformerFlags]](
+      val transformerConfigurationType =
+        c.WeakTypeTag[io.scalaland.chimney.dsl.TransformerConfiguration[? <: runtime.TransformerFlags]](
           c.typecheck(
             tree = tq"${typeOf[io.scalaland.chimney.dsl.TransformerConfiguration[? <: runtime.TransformerFlags]]}",
             silent = true,
@@ -96,20 +95,18 @@ final class CodecMacros(val c: blackbox.Context) extends DerivationPlatform with
           ).tpe
         )
 
-      Expr.summonImplicit(transformerConfigurationType).getOrElse {
+      Expr.summonImplicit(transformerConfigurationType).toOption.getOrElse {
         // $COVERAGE-OFF$should never happen unless someone mess around with type-level representation
         reportError("Can't locate implicit TransformerConfiguration!")
         // $COVERAGE-ON$
       }
     }
-    val implicitScopeFlagsType = Type.platformSpecific
-      .fromUntyped[runtime.TransformerFlags](implicitScopeConfig.tpe.tpe.typeArgs.head)
-      .as_?<[runtime.TransformerFlags]
+    val implicitScopeFlagsType = c
+      .WeakTypeTag[runtime.TransformerFlags](implicitScopeConfig.tpe.tpe.typeArgs.head)
+      .as_??<:[runtime.TransformerFlags]
 
-    Expr.block(
-      List(Expr.suppressUnused(implicitScopeConfig)),
-      useImplicitScopeFlags(implicitScopeFlagsType)
-    )
+    val body = useImplicitScopeFlags(implicitScopeFlagsType)
+    c.Expr[A](q"{ ${Expr.suppressUnused(implicitScopeConfig)}; $body }")
   }
 
   private def retypecheck[A: Type](expr: c.Expr[A]): c.Expr[A] = try

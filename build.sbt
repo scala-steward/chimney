@@ -14,12 +14,19 @@ val mavenCentralSnapshots = "Maven Central Snapshots" at "https://central.sonaty
 // TODO: remove this once we have a release of Scala 2.13.17
 Global / resolvers += "scala-integration" at "https://scala-ci.typesafe.com/artifactory/scala-integration/"
 
+// TODO(hearth-migration): REMOVE once versions.hearth is back on a release (see the LOUD WARNING at versions.hearth).
+// Global so that both library dependencies AND the Scala 3 hearth-cross-quotes compilerPlugin resolve the SNAPSHOT.
+Global / resolvers += mavenCentralSnapshots
+
 // Versions:
 
 val versions = new {
   // Versions we are publishing for.
   val scala213 = "2.13.18"
-  val scala3 = "3.7.3"
+  val scala3 = "3.8.4"
+  // For chimney-sandwich-test-cases-3 ONLY: sbt forbids Scala 2.13 subprojects from depending on Scala 3.8+
+  // subprojects (sbt-8728), and 2.13's -Ytasty-reader tops out below TASTy 28.8 - see the module for details.
+  val scala3Sandwich = "3.7.3"
 
   // Which versions should be cross-compiled for publishing
   val scalas = List(scala213, scala3)
@@ -27,13 +34,21 @@ val versions = new {
   val platforms = List(VirtualAxis.jvm, VirtualAxis.js, VirtualAxis.native)
 
   // Dependencies.
-  val macroCommons = "2.1.0"
+  // !!! TODO(hearth-migration) LOUD WARNING !!! -----------------------------------------------------------------
+  // !!! SNAPSHOT PIN: 0.4.0-16-gd4adc1c-SNAPSHOT is a MOVING TARGET from Maven Central Snapshots (resolver below).
+  // !!! It MUST be replaced by a proper hearth RELEASE (and the snapshots resolver removed again)
+  // !!! BEFORE merging PR #903. Do NOT release/merge with a -SNAPSHOT hearth dependency.
+  // !!! -----------------------------------------------------------------------------------------------------------
+  val hearth = "0.4.0-27-g71200e3-SNAPSHOT"
   val cats = "2.13.0"
+  // Latest published kindlings (its 0.3.0 depends on hearth 0.4.0, same as us; publishes JVM/JS/Native x 2.13/3).
+  // TODO(kindlings-release): snapshot carrying kubuszok/kindlings#163 (NonEmptySeq/NonEmptyLazyList IsCollection
+  // providers). Return to a released kindlings before merging PR #903.
+  val kindlingsCatsIntegration = "0.3.0-24-gfc36d68-SNAPSHOT"
   val kindProjector = "0.13.4"
-  val munit = "1.2.4"
-  val scalaCollectionCompat = "2.14.0"
+  val munit = "1.3.3"
   val scalaJavaCompat = "1.0.2"
-  val scalaJavaTime = "2.6.0"
+  val scalaJavaTime = "2.7.0"
   val scalapbRuntime = scalapb.compiler.Version.scalapbVersion
 
   // Explicitly handle Scala 2.13 and Scala 3 separately.
@@ -102,6 +117,7 @@ val settings = Seq(
     for3 = Seq(
       // format: off
       "-encoding", "UTF-8",
+      "-release", "17", // Chimney 2.x baseline: Scala 3 artifacts target JDK 17+ (Hearth itself requires JDK 11+)
       // "-rewrite", // in tests removes case classe used for error message testing
       // "-source", "3.3-migration",
       // format: on
@@ -115,6 +131,7 @@ val settings = Seq(
       "-Wconf:msg=Missing symbol position:s", // suppress warning https://github.com/scala/scala3/issues/21672
       "-Wconf:msg=Implicit parameters should be provided with a `using` clause:s", // we're not rewriting this, since we are still cross-compiling with 2.13
       "-Wconf:msg=The syntax `<function> _` is no longer supported:s", // we're not rewriting this, since we are still cross-compiling with 2.13
+      "-Wconf:msg=The trailing ` _` for eta-expansion is unnecessary:s", // Scala 3.8 wording of the warning above
       "-Wconf:msg=uninitialized.:s", // we're not rewriting this, since we are still cross-compiling with 2.13
       "-Wnonunit-statement",
       // "-Wunused:imports", // import x.Underlying as X is marked as unused even though it is! probably one of https://github.com/scala/scala3/issues/: #18564, #19252, #19657, #19912
@@ -124,7 +141,7 @@ val settings = Seq(
       "-Wunused:implicits",
       "-Wunused:params",
       "-Wvalue-discard",
-      "-Xfatal-warnings",
+      "-Werror", // -Xfatal-warnings is a deprecated alias since Scala 3.8
       "-Xcheck-macros",
       "-Xkind-projector:underscores",
       "Yimplicit-to-given"
@@ -132,7 +149,7 @@ val settings = Seq(
     for2_13 = Seq(
       // format: off
       "-encoding", "UTF-8",
-      "-release", "8",
+      "-release", "11", // Chimney 2.x baseline: Scala 2.13 artifacts target JDK 11+ (Hearth built-ins emit JDK 9+ APIs like java.util.Map.entry - documented upstream since hearth#330)
       // format: on
       "-unchecked",
       "-deprecation",
@@ -173,14 +190,17 @@ val settings = Seq(
     )
   ),
   Test / compile / scalacOptions ++= versions.fold(scalaVersion.value)(
-    for3 = Seq("-Wconf:msg=unused local definition:s"), // silence warn that appears since 3.3.7
+    for3 = Seq(
+      "-Wconf:msg=unused local definition:s", // silence warn that appears since 3.3.7
+      "-Wconf:msg=with as a type operator has been deprecated:s" // silence deprecation of `with` in Scala 3.4+
+    ),
     for2_13 = Seq.empty
   ),
   Compile / doc / scalacOptions ++= versions.fold(scalaVersion.value)(
     for3 = Seq("-Ygenerate-inkuire"), // type-based search for Scala 3, this option cannot go into compile
     for2_13 = Seq.empty
   ),
-  Compile / console / scalacOptions --= Seq("-Ywarn-unused:imports", "-Xfatal-warnings"),
+  Compile / console / scalacOptions --= Seq("-Ywarn-unused:imports", "-Xfatal-warnings", "-Werror"),
   Test / compile / scalacOptions --= versions.fold(scalaVersion.value)(
     for3 = Seq.empty,
     for2_13 = Seq.empty
@@ -243,7 +263,7 @@ val publishSettings = Seq(
 val mimaSettings = Seq(
   mimaPreviousArtifacts := {
     val previousVersions = moduleName.value match {
-      case "chimney" | "chimney-cats" | "chimney-java-collections" | "chimney-protobufs" => Set()
+      case "chimney" | "chimney-cats" | "chimney-protobufs" => Set()
       // TODO: restore after 2.0.0 release
       case _ => Set()
     }
@@ -289,7 +309,7 @@ val ciCommand = (platform: String, scalaSuffix: String) => {
 
 val publishLocalForTests = {
   val jvm = for {
-    module <- Vector("chimney", "chimneyCats", "chimneyProtobufs", "chimneyJavaCollections")
+    module <- Vector("chimney", "chimneyCats", "chimneyProtobufs")
     moduleVersion <- Vector(module, module + "3")
   } yield moduleVersion + "/publishLocal"
   val js = for {
@@ -310,6 +330,8 @@ lazy val root = project
   .settings(publishSettings)
   .settings(noPublishSettings)
   .aggregate(chimney.projectRefs *)
+  .aggregate(chimneyEngineTestExtension.projectRefs *)
+  .aggregate(chimneyChimneyExtensionTest.projectRefs *)
   .aggregate(chimneyCats.projectRefs *)
   .aggregate(chimneyJavaCollections.projectRefs *)
   .aggregate(chimneyProtobufs.projectRefs *)
@@ -332,7 +354,7 @@ lazy val root = project
          |
          |If you need to test library locally in a different project, use publish-local-for-tests or manually publishLocal:
          | - chimney
-         | - cats/java-collections/protobufs integration (optional)
+         | - cats/protobufs integration (optional)
          |for the right Scala version and platform (see projects task).
          |""".stripMargin,
     usefulTasks := Seq(
@@ -387,11 +409,74 @@ lazy val chimney = projectMatrix
       for3 = Seq("-skip-by-regex:io\\.scalaland\\.chimney\\.internal"),
       for2_13 = Seq("-skip-packages", "io.scalaland.chimney.internal")
     ),
-    resolvers += mavenCentralSnapshots,
-    libraryDependencies += "io.scalaland" %%% "chimney-macro-commons" % versions.macroCommons,
+    libraryDependencies += "com.kubuszok" %%% "hearth" % versions.hearth,
+    // ChimneySpec is based on hearth-munit's MacroSuite (group/==>/compileErrors-check utilities).
+    libraryDependencies += "com.kubuszok" %%% "hearth-munit" % versions.hearth % Test,
+    // Cross-quotes: on Scala 2 they are macros (part of hearth), on Scala 3 they are a compiler plugin.
+    libraryDependencies ++= versions.fold(scalaVersion.value)(
+      for2_13 = Seq.empty,
+      for3 = Seq(compilerPlugin("com.kubuszok" %% "hearth-cross-quotes" % versions.hearth))
+    ),
     // Changes to macros should not cause any runtime problems
     mimaBinaryIssueFilters := Seq(ProblemFilters.exclude[Problem]("io.scalaland.chimney.internal.compiletime.*"))
   )
+  // Test-only Hearth StandardMacroExtension (ServiceLoader-registered) proving that third-party extensions are
+  // consulted by the engine's built-in fallbacks. Must be a SEPARATE module: extension classes are loaded reflectively
+  // at macro-expansion time, so they must be compiled before the test sources that trigger the expansion.
+  // NOTE: this puts a test-scoped dependency on an unpublished artifact into the published pom - harmless for
+  // consumers (test scope is not transitive), but TODO(hearth-extensions): consider pomPostProcess filtering.
+  .dependsOn(chimneyEngineTestExtension % Test)
+
+// Not published - see the comment at the `.dependsOn` in `chimney` above.
+lazy val chimneyEngineTestExtension = projectMatrix
+  .in(file("chimney-engine-test-extension"))
+  .someVariations(versions.scalas, versions.platforms)(only1VersionInIDE *)
+  .enablePlugins(GitVersioning, GitBranchPrompt)
+  .disablePlugins(WelcomePlugin, ProtocPlugin)
+  .settings(settings *)
+  .settings(publishSettings *)
+  .settings(noPublishSettings *)
+  .settings(dependencies *)
+  .settings(
+    moduleName := "chimney-engine-test-extension",
+    name := "chimney-engine-test-extension",
+    description := "Test-only Hearth StandardMacroExtension used by chimney's engine test suites",
+    mimaFailOnNoPrevious := false, // this module is not published
+    libraryDependencies += "com.kubuszok" %%% "hearth" % versions.hearth,
+    // Cross-quotes: on Scala 2 they are macros (part of hearth), on Scala 3 they are a compiler plugin.
+    libraryDependencies ++= versions.fold(scalaVersion.value)(
+      for2_13 = Seq.empty,
+      for3 = Seq(compilerPlugin("com.kubuszok" %% "hearth-cross-quotes" % versions.hearth))
+    )
+  )
+
+// Test-only proof of Chimney's OWN engine-aware macro-extension SPI (io.scalaland.chimney.integrations.ChimneyMacroExtension).
+// Unlike chimneyEngineTestExtension (which only implements Hearth's StdExtensions and so needs no chimney dep), this
+// module IMPLEMENTS a Chimney SPI, so it needs chimney on the Compile classpath. It therefore CANNOT be depended upon by
+// chimney (that would cycle); instead it depends on chimney and hosts its OWN specs (the chimney-protobufs pattern),
+// which prove the ServiceLoader-registered handler is consulted from a SEPARATELY-COMPILED artifact.
+lazy val chimneyChimneyExtensionTest = projectMatrix
+  .in(file("chimney-chimney-extension-test"))
+  .someVariations(versions.scalas, versions.platforms)(only1VersionInIDE *)
+  .enablePlugins(GitVersioning, GitBranchPrompt)
+  .disablePlugins(WelcomePlugin, ProtocPlugin)
+  .settings(settings *)
+  .settings(publishSettings *)
+  .settings(noPublishSettings *)
+  .settings(dependencies *)
+  .settings(
+    moduleName := "chimney-chimney-extension-test",
+    name := "chimney-chimney-extension-test",
+    description := "Test-only Chimney ChimneyMacroExtension used to prove the engine-aware macro-extension SPI",
+    mimaFailOnNoPrevious := false, // this module is not published
+    libraryDependencies += "com.kubuszok" %%% "hearth" % versions.hearth,
+    // Cross-quotes: on Scala 2 they are macros (part of hearth), on Scala 3 they are a compiler plugin.
+    libraryDependencies ++= versions.fold(scalaVersion.value)(
+      for2_13 = Seq.empty,
+      for3 = Seq(compilerPlugin("com.kubuszok" %% "hearth-cross-quotes" % versions.hearth))
+    )
+  )
+  .dependsOn(chimney % s"$Test->$Test;$Compile->$Compile")
 
 lazy val chimneyCats = projectMatrix
   .in(file("chimney-cats"))
@@ -411,10 +496,32 @@ lazy val chimneyCats = projectMatrix
   .settings(
     Compile / console / initialCommands := "import io.scalaland.chimney.*, io.scalaland.chimney.dsl.*, io.scalaland.chimney.cats.*",
     libraryDependencies += "org.typelevel" %%% "cats-core" % versions.cats,
-    libraryDependencies += "org.typelevel" %%% "cats-laws" % versions.cats % Test
+    libraryDependencies += "org.typelevel" %%% "cats-laws" % versions.cats % Test,
+    // Since 2.0.0 chimney-cats also ships a Chimney `ChimneyMacroExtension` (ServiceLoader-registered, see
+    // src/main/resources/META-INF/services): engine-aware SpecialCaseHandlers restoring the total NonEmpty<->NonEmpty
+    // (Traverse), NonEmptyMap/NonEmptySet and FunctionK conversions that used to live as `CatsDataImplicits`. The
+    // handlers use Hearth's API + cross-quotes directly (hearth itself already comes transitively through chimney).
+    libraryDependencies += "com.kubuszok" %%% "hearth" % versions.hearth,
+    // Cross-quotes: on Scala 2 they are macros (part of hearth), on Scala 3 they are a compiler plugin.
+    libraryDependencies ++= versions.fold(scalaVersion.value)(
+      for2_13 = Seq.empty,
+      for3 = Seq(compilerPlugin("com.kubuszok" %% "hearth-cross-quotes" % versions.hearth))
+    ),
+    // Hearth StandardMacroExtension with IsCollection/IsMap providers for cats.data types (NonEmptyList, Chain, ...).
+    // Test-scoped: it is consulted at MACRO-EXPANSION time of the TEST sources (ServiceLoader on the compile
+    // classpath of the code being derived) - the specs prove cats collections derive WITHOUT chimney-cats implicits.
+    // NOTE: kindlings' Scala 3 artifacts are built with Scala 3.8.x (TASTy 28.8) - loading them requires chimney to
+    // build with Scala 3.8+ (older compilers throw "Forward incompatible TASTy file" from hearth's extension loading).
+    // Since hearth#325 (0.4.1) an unloadable extension jar is SKIPPED gracefully instead of poisoning every derivation
+    // in the module - but the specs here obviously still need the extension to actually load.
+    libraryDependencies += "com.kubuszok" %%% "kindlings-cats-integration" % versions.kindlingsCatsIntegration % Test
   )
   .dependsOn(chimney % s"$Test->$Test;$Compile->$Compile")
 
+// Since 2.0.0 this module is NOT published and contains NO implicits: Hearth's built-in std-extension providers
+// (consulted by the engine's extension-fallback layer) support java.util collections, java.util.Optional and Java
+// boxed primitives out of the box, without any import. The module remains as a test-only proof of that coverage
+// (every type previously served by JavaCollectionsImplicits/JavaPrimitivesImplicits is still asserted here).
 lazy val chimneyJavaCollections = projectMatrix
   .in(file("chimney-java-collections"))
   .someVariations(versions.scalas, List(VirtualAxis.jvm))(only1VersionInIDE *)
@@ -423,14 +530,13 @@ lazy val chimneyJavaCollections = projectMatrix
   .settings(
     moduleName := "chimney-java-collections",
     name := "chimney-java-collections",
-    description := "Integrations with selected Java collections"
+    description := "Tests proving that java.util types are supported by Chimney out of the box (via Hearth std extensions)"
   )
   .settings(settings *)
-  .settings(versionSchemeSettings *)
   .settings(publishSettings *)
-  .settings(mimaSettings *)
+  .settings(noPublishSettings *)
   .settings(
-    Compile / console / initialCommands := "import io.scalaland.chimney.*, io.scalaland.chimney.dsl.*, io.scalaland.chimney.javacollections.*"
+    mimaFailOnNoPrevious := false // this module is not published
   )
   .dependsOn(chimney % s"$Test->$Test;$Compile->$Compile")
 
@@ -459,9 +565,23 @@ lazy val chimneyProtobufs = projectMatrix
   .settings(
     Compile / console / initialCommands := "import io.scalaland.chimney.*, io.scalaland.chimney.dsl.*, io.scalaland.chimney.protobufs.*",
     scalacOptions := {
-      // protobufs Compile contains only generated classes, and scalacOptions from settings:* breaks Scala 3 compilation
+      // protobufs Compile mixes scalapb-generated classes with hand-written sources, and the strict scalacOptions
+      // from settings:* break the generated code - keep the options minimal (compiler-plugin flags like -Xplugin/
+      // -scalajs are injected by sbt AFTER this setting, so cross-quotes/Scala.js keep working); the hand-written
+      // sources are therefore written in the -Xsource:3-free common syntax subset (see ProtobufsMacroExtension).
       if (scalacOptions.value.contains("-scalajs")) Seq("-scalajs") else Seq.empty
     },
+    // Since 2.0.0 chimney-protobufs also ships a Hearth StandardMacroExtension (ServiceLoader-registered, see
+    // src/main/resources/META-INF/services): std-extension providers for ByteString/wrappers.*Value/Timestamp
+    // replaced the corresponding implicits, so those conversions work WITHOUT any import once this jar is on the
+    // classpath. The providers use Hearth's API + cross-quotes directly, hence the explicit dependencies below
+    // (hearth itself already comes transitively through the chimney module).
+    libraryDependencies += "com.kubuszok" %%% "hearth" % versions.hearth,
+    // Cross-quotes: on Scala 2 they are macros (part of hearth), on Scala 3 they are a compiler plugin.
+    libraryDependencies ++= versions.fold(scalaVersion.value)(
+      for2_13 = Seq.empty,
+      for3 = Seq(compilerPlugin("com.kubuszok" %% "hearth-cross-quotes" % versions.hearth))
+    ),
     Compile / PB.targets := Seq(scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"),
     Test / PB.protoSources += PB.externalSourcePath.value,
     Test / PB.targets := Seq(scalapb.gen() -> (Test / sourceManaged).value / "scalapb"),
@@ -492,7 +612,16 @@ lazy val chimneySandwichTestCases3 = projectMatrix
     moduleName := "chimney-sandwich-test-cases-3",
     name := "chimney-sandwich-test-cases-3",
     description := "Tests cases compiled with Scala 3 to test macros in 2.13x3 cross-compilation",
-    mimaFailOnNoPrevious := false // this module is not published
+    mimaFailOnNoPrevious := false, // this module is not published
+    // PINNED to the newest Scala 3 line a Scala 2.13 subproject can still consume: since Scala 3.8 the
+    // scala-library coordinate was unified and sbt REFUSES 2.13-depends-on-3.8+ sandwiches outright
+    // ("[sbt-8728] Smorrebrod - the end of Scala 2.13-3.x sandwich", resolution asks for the nonexistent
+    // org.scala-lang:scala-compiler:3.8.x) - and Scala 2.13's -Ytasty-reader cannot read TASTy 28.8 anyway.
+    // This mirrors what real 2.13x3 sandwich users can do, so the fixture stays on 3.7.
+    scalaVersion := versions.scala3Sandwich,
+    // Unpublished fixture: don't force the JDK 17 bytecode floor - the Scala 2.13 CI job (temurin:11) compiles
+    // this module for the 2.13x3 sandwich tests, and -release 17 cannot be honored by a compiler running on JDK 11.
+    scalacOptions --= Seq("-release", "17")
   )
 
 lazy val chimneySandwichTests = projectMatrix

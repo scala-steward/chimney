@@ -2,10 +2,14 @@ package io.scalaland.chimney.internal.compiletime.derivation.transformer
 
 import io.scalaland.chimney.partial
 
-private[compiletime] trait Contexts { this: Derivation =>
+private[compiletime] trait Contexts { this: Derivation & hearth.MacroCommons =>
 
   /** Stores all the "global" information that might be needed: types used, user configuration, runtime values, etc */
-  sealed protected trait TransformationContext[From, To] extends scala.Product with Serializable {
+  // Public (not `protected`): the engine-aware macro-extension SPI (ChimneyEngineExtensionApi) re-exposes this type, as
+  // `SpecialCaseContext`, to separately-compiled in-tree integration artifacts (a `private[chimney]` type member does
+  // not resolve cross-file through a path on Scala 3). It lives in the mima-excluded `internal.compiletime` package, and
+  // its members are still reached only via facade helpers (`sourceOf`/`isPartialContext`/`prefersPartialTransformer`).
+  sealed trait TransformationContext[From, To] extends scala.Product with Serializable {
     val src: Expr[From]
 
     val From: Type[From]
@@ -36,21 +40,29 @@ private[compiletime] trait Contexts { this: Derivation =>
         updateFallbacks: TransformerOverride.ForFallback => Vector[TransformerOverride.ForFallback] = Vector(_)
     ): TransformationContext[NewFrom, NewTo] =
       fold[TransformationContext[NewFrom, NewTo]] { (ctx: TransformationContext.ForTotal[From, To]) =>
+        val newSrcPath = ctx.srcJournal.last._1.concat(followFrom)
+        val newTgtPath = ctx.tgtJournal.last.concat(followTo)
         TransformationContext.ForTotal[NewFrom, NewTo](src = newSrc)(
           From = Type[NewFrom],
           To = Type[NewTo],
-          srcJournal = ctx.srcJournal :+ (ctx.srcJournal.last._1.concat(followFrom) -> newSrc.as_??),
-          tgtJournal = ctx.tgtJournal :+ ctx.tgtJournal.last.concat(followTo),
-          config = ctx.config.prepareForRecursiveCall(followFrom, followTo, updateFallbacks)(ctx),
+          srcJournal = ctx.srcJournal :+ (newSrcPath -> newSrc.as_??),
+          tgtJournal = ctx.tgtJournal :+ newTgtPath,
+          config = ctx.config
+            .injectForAllOverrides[NewFrom, NewTo](followFrom, followTo, newSrcPath, newTgtPath)
+            .prepareForRecursiveCall(followFrom, followTo, updateFallbacks)(ctx),
           ctx.derivationStartedAt
         )
       } { (ctx: TransformationContext.ForPartial[From, To]) =>
+        val newSrcPath = ctx.srcJournal.last._1.concat(followFrom)
+        val newTgtPath = ctx.tgtJournal.last.concat(followTo)
         TransformationContext.ForPartial[NewFrom, NewTo](src = newSrc, failFast = ctx.failFast)(
           From = Type[NewFrom],
           To = Type[NewTo],
-          srcJournal = ctx.srcJournal :+ (ctx.srcJournal.last._1.concat(followFrom) -> newSrc.as_??),
-          tgtJournal = ctx.tgtJournal :+ ctx.tgtJournal.last.concat(followTo),
-          config = ctx.config.prepareForRecursiveCall(followFrom, followTo, updateFallbacks)(ctx),
+          srcJournal = ctx.srcJournal :+ (newSrcPath -> newSrc.as_??),
+          tgtJournal = ctx.tgtJournal :+ newTgtPath,
+          config = ctx.config
+            .injectForAllOverrides[NewFrom, NewTo](followFrom, followTo, newSrcPath, newTgtPath)
+            .prepareForRecursiveCall(followFrom, followTo, updateFallbacks)(ctx),
           ctx.derivationStartedAt
         )
       }

@@ -1,13 +1,13 @@
 package io.scalaland.chimney.internal.compiletime.derivation.transformer.rules
 
-import io.scalaland.chimney.internal.compiletime.DerivationResult
+import hearth.fp.effect.MIO
 import io.scalaland.chimney.internal.compiletime.derivation.transformer.Derivation
 
-private[compiletime] trait TransformValueClassToValueClassRuleModule { this: Derivation =>
+private[compiletime] trait TransformValueClassToValueClassRuleModule { this: Derivation & hearth.MacroCommons =>
 
   protected object TransformValueClassToValueClassRule extends Rule("ValueClassToValueClass") {
 
-    def expand[From, To](implicit ctx: TransformationContext[From, To]): DerivationResult[Rule.ExpansionResult[To]] =
+    def expand[From, To](implicit ctx: TransformationContext[From, To]): MIO[Rule.ExpansionResult[To]] =
       (Type[From], Type[To]) match {
         case (ValueClassType(from2), ValueClassType(to2)) =>
           if (ctx.config.areOverridesEmpty) {
@@ -18,11 +18,16 @@ private[compiletime] trait TransformValueClassToValueClassRuleModule { this: Der
               valueTo.fieldName,
               valueTo.wrap
             )
-          } else DerivationResult.attemptNextRuleBecause("Configuration has defined overrides")
+          } else attemptNextRuleBecause("Configuration has defined overrides")
         case (WrapperClassType(from2), WrapperClassType(to2)) =>
           if (ctx.config.areOverridesEmpty) {
-            if (ctx.config.flags.nonAnyValWrappers) {
-              import from2.{Underlying as InnerFrom, value as valueFrom}, to2.{Underlying as InnerTo, value as valueTo}
+            import from2.{Underlying as InnerFrom, value as valueFrom}, to2.{Underlying as InnerTo, value as valueTo}
+            // Each side independently skips the flag when extension-provided - see
+            // ValueClasses.WrapperClass.fromStdExtension (structurally matched wrappers stay flag-gated).
+            if (
+              (ctx.config.flags.nonAnyValWrappers || valueFrom.fromStdExtension) &&
+              (ctx.config.flags.nonAnyValWrappers || valueTo.fromStdExtension)
+            ) {
               unwrapTransformAndWrapAgain[From, To, InnerFrom, InnerTo](
                 valueFrom.fieldName,
                 valueFrom.unwrap,
@@ -30,9 +35,9 @@ private[compiletime] trait TransformValueClassToValueClassRuleModule { this: Der
                 valueTo.wrap
               )
             } else
-              DerivationResult.attemptNextRuleBecause("Rewrapping non-AnyVal wrapper types was disabled by a flag")
-          } else DerivationResult.attemptNextRuleBecause("Configuration has defined overrides")
-        case _ => DerivationResult.attemptNextRule
+              attemptNextRuleBecause("Rewrapping non-AnyVal wrapper types was disabled by a flag")
+          } else attemptNextRuleBecause("Configuration has defined overrides")
+        case _ => attemptNextRule
       }
 
     // Exposed for TransformValueClassToTypeRuleModule
@@ -48,7 +53,8 @@ private[compiletime] trait TransformValueClassToValueClassRuleModule { this: Der
             case ValueClassType(fallback2) =>
               import fallback2.Underlying as InnerFallback
               fallback2.value.unwrap(fallbackExpr).as_??
-            case WrapperClassType(fallback2) if ctx.config.flags.nonAnyValWrappers =>
+            case WrapperClassType(fallback2)
+                if ctx.config.flags.nonAnyValWrappers || fallback2.value.fromStdExtension =>
               import fallback2.Underlying as InnerFallback
               fallback2.value.unwrap(fallbackExpr).as_??
             case _ =>
@@ -65,7 +71,7 @@ private[compiletime] trait TransformValueClassToValueClassRuleModule { this: Der
         unwrapFromIntoInnerFrom: Expr[From] => Expr[InnerFrom],
         innerToFieldName: String,
         wrapInnerToIntoIo: Expr[InnerTo] => Expr[To]
-    )(implicit ctx: TransformationContext[From, To]): DerivationResult[Rule.ExpansionResult[To]] =
+    )(implicit ctx: TransformationContext[From, To]): MIO[Rule.ExpansionResult[To]] =
       deriveRecursiveTransformationExpr[InnerFrom, InnerTo](
         unwrapFromIntoInnerFrom(ctx.src),
         followTo = Path(_.select(innerFromFieldName)),
@@ -74,7 +80,7 @@ private[compiletime] trait TransformValueClassToValueClassRuleModule { this: Der
       ).flatMap { (derivedInnerTo: TransformationExpr[InnerTo]) =>
         // We're constructing:
         // '{ ${ new $To(${ derivedInnerTo }) } /* using ${ src }.$from internally */ }
-        DerivationResult.expanded(derivedInnerTo.map(wrapInnerToIntoIo))
+        expanded(derivedInnerTo.map(wrapInnerToIntoIo))
       }
   }
 }
