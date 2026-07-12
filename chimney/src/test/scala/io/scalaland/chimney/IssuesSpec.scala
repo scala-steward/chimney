@@ -960,4 +960,24 @@ class IssuesSpec extends ChimneySpec {
     // inherited from the traits, they are surfaced as method/inherited accessors.
     source.into[Person].enableMethodAccessors.enableInheritedAccessors.transform ==> Person("Alice", 30)
   }
+
+  test("fix issue #831") {
+    case class UserDAO(userId: Int, createdAt: String)
+    case class UserDTO(user_id: Int, created_at: String)
+    val userId = 123
+    val createdAt = "2024-12-03T12:00:00"
+    UserDAO(userId, createdAt)
+      .into[UserDTO]
+      .enableCustomFieldNameComparison(
+        TransformedNamesComparison.CamelSnakeCaseEquality
+      )
+      .transform ==> UserDTO(userId, createdAt)
+
+    UserDTO(userId, createdAt)
+      .into[UserDAO]
+      .enableCustomFieldNameComparison(
+        TransformedNamesComparison.CamelSnakeCaseEquality
+      )
+      .transform ==> UserDAO(userId, createdAt)
+  }
 }

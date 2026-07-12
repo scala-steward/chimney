@@ -79,4 +79,59 @@ class TransformedNamesComparisonSpec extends ChimneySpec {
       TransformedNamesComparison.CaseInsensitiveEquality.namesMatch("SOME_FIELD", "someField") ==> false
     }
   }
+
+  group("TransformedNamesComparison.CamelSnakeCaseEquality") {
+
+    def namesMatches(from: String, to: String): Boolean =
+      TransformedNamesComparison.CamelSnakeCaseEquality.namesMatch(
+        from,
+        to
+      ) && TransformedNamesComparison.CamelSnakeCaseEquality.namesMatch(to, from)
+
+    test("should match identical names") {
+      TransformedNamesComparison.CamelSnakeCaseEquality.namesMatch("_", "_") ==> true
+      TransformedNamesComparison.CamelSnakeCaseEquality.namesMatch("someField", "someField") ==> true
+    }
+
+    test("should match conversion") {
+      namesMatches("some_Field", "someField") ==> true
+      namesMatches("some_field", "someField") ==> true
+      namesMatches("some_field_123", "someField123") ==> true
+      namesMatches("some__field", "someField") ==> true
+      namesMatches("_some__field", "someField") ==> true
+      namesMatches("SOME_FIELD", "someField") ==> true
+    }
+
+    test("should not match conversion") {
+      TransformedNamesComparison.CamelSnakeCaseEquality.namesMatch("_", "__") ==> false
+      TransformedNamesComparison.CamelSnakeCaseEquality.namesMatch("somefield", "some_field") ==> false
+      TransformedNamesComparison.CamelSnakeCaseEquality.namesMatch("some_field", "some_Field") ==> false
+      TransformedNamesComparison.CamelSnakeCaseEquality.namesMatch("someField", "somefield") ==> false
+    }
+
+  }
+
+  group("TransformedNamesComparison.IgnorePrefix") {
+
+    test("should match when the source name equals the prefix followed by the target name") {
+      IgnoreFooPrefix.namesMatch("FooBar", "Bar") ==> true
+      IgnoreFooPrefix.namesMatch("FooBaz", "Baz") ==> true
+    }
+
+    test("should match identical names only when the prefix is empty") {
+      IgnoreFooPrefix.namesMatch("Bar", "Bar") ==> false
+      IgnoreFooPrefix.namesMatch("Foo", "Foo") ==> false
+    }
+
+    test("should not match when the prefix is missing or the names differ") {
+      IgnoreFooPrefix.namesMatch("Bar", "FooBar") ==> false
+      IgnoreFooPrefix.namesMatch("BarFoo", "Bar") ==> false
+      IgnoreFooPrefix.namesMatch("FooBar", "Baz") ==> false
+    }
+  }
 }
+
+/** Extended outside of `TransformedNamesComparison` to make sure `IgnorePrefix` is not `sealed` and can be reused by
+  * downstream code, as documented.
+  */
+case object IgnoreFooPrefix extends TransformedNamesComparison.IgnorePrefix("Foo")

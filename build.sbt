@@ -46,7 +46,8 @@ val versions = new {
   // providers). Return to a released kindlings before merging PR #903.
   val kindlingsCatsIntegration = "0.3.0-24-gfc36d68-SNAPSHOT"
   val kindProjector = "0.13.4"
-  val munit = "1.3.3"
+  val munit = "1.3.4"
+  val scalaCollectionCompat = "2.14.0"
   val scalaJavaCompat = "1.0.2"
   val scalaJavaTime = "2.7.0"
   val scalapbRuntime = scalapb.compiler.Version.scalapbVersion
