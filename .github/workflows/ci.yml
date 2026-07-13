@@ -2,10 +2,10 @@ name: CI Build
 
 on:
   push:
-    branches: [ master, 2.0.0-development ]
+    branches: [ master ]
     tags: [ '*' ]
   pull_request:
-    branches: [ master, 2.0.0-development ]
+    branches: [ master ]
     types: [ opened, reopened, labeled, synchronize ]
 
 jobs:

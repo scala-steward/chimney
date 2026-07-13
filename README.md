@@ -25,6 +25,11 @@ If you are looking to up-to-date artifacts versions ready to copy-paste into you
 [Scaladex](https://index.scala-lang.org/scalalandio/chimney/artifacts/chimney) or
 [Maven Repository](https://mvnrepository.com/search?q=chimney).
 
+> [!note]
+>
+> This is the code for the Chimney 2.x line. If you are looking for the Chimney 1.x line that targetted Scala 2.12, 2.13 and 3.3
+> see [the `line-1.x` branch](https://github.com/scalalandio/chimney/tree/line-1.x).
+
 ## Adopters
 
 If your company is using Chimney, please consider adding it to the list below:
