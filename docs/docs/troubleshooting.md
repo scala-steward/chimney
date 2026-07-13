@@ -60,47 +60,47 @@ to make migration easier, `AutoDerived` still exist but as a type alias.
 
 Breaking changes in API:
 
- - in core DSL:
-   - `.toPartialResult` extension method from `import io.scalaland.chimney.dsl._` was dropped since
-     `.asResult` from `import io.scalaland.chimney.partial.syntax._` supports this and other use cases
-   - `.toPartialResultOrString` got replaced by `.orStringAsResult`
-   - `.withCoproductInstance` and `.withCoproductInstancePartial` got removed, since `.withSealedSubtype...` and
-     `.withEnumCase...` better describe what they do
- - the Java collections integration module (`chimney-java-collections`) was **removed** - `java.util.Optional`,
-   `java.util` collections/maps, `java.util.stream`s and Java boxed primitives are
-   [supported out of the box](cookbook.md#java-collections-integration) on the JVM now; drop the dependency and the
-   `import io.scalaland.chimney.javacollections._` and everything should keep working (if you used the generic
-   `javaEnumSet`/`javaEnumMap` implicits with an abstract `E <: Enum[E]` type parameter, you now need to provide
-   your own `integrations.TotallyBuildIterable`/`TotallyBuildMap` for that use case)
- - in Cats integration module:
-   - the `io.scalaland.chimney.integrations` instances for `cats.data` types (`Chain`, `NonEmptyList`,
-     `NonEmptySet`, ...) were **removed** from `chimney-cats` - add
-     [`com.kubuszok::kindlings-cats-integration`](cookbook.md#conversions-tofrom-cats-collections) to the classpath
-     instead (no import needed); note [the behavior changes](cookbook.md#conversions-tofrom-cats-collections):
-     same-type `NonEmpty*` conversions (except `NonEmptyList`) are `PartialTransformer`-only now, the empty-input
-     error message changed, and `NonEmptySeq`/`NonEmptyLazyList` are not covered yet
-   - the `Traverse`/`~>` (FunctionK)-based outer transformers were **removed** without replacement - if you relied
-     on them, define your own [`TotalOuterTransformer`/`PartialOuterTransformer`](cookbook.md#custom-outer-type-conversion)
-   - the type class instances for Chimney's types and the `Validated` <-> `partial.Result` conversions stay in
-     `chimney-cats` unchanged
- - in Protobuf integration module:
-   - `trait ProtobufTransformerImplicits` was renamed to `trait ProtobufsTransformerImplicits` to match the convention of
-     the rest of the codebase (shouldn't affect anyone who use just `import io.scalaland.chimney.protobufs._` but still
-     a breaking change)
-   - the implicits for the well-known types - the `wrappers.*Value` `Transformer`s
-     (`totalTransformerFromBoolValueToBoolean` and friends), the `ByteString`/`BytesValue` integrations
-     (`protobufByteStringIsTotallyBuildIterable`/`protobufBytesValueIsTotallyBuildIterable`, which in earlier
-     `2.0.0` milestones replaced the `1.x` `totalTransformerFrom{ByteString,BytesValue}ToByteCollection` pairs)
-     and `Timestamp` <-> `java.time.Instant` (`totalTransformerFromTimestampToJavaInstantInstance` and back) - were
-     **removed**: the artifact now ships
-     [macro-extension providers](cookbook.md#build-in-scalapb-types) serving these conversions with **no import at
-     all** (just keep `chimney-protobufs` on the classpath)
-   - `import io.scalaland.chimney.protobufs._` is still needed for `Empty`, the `Duration` family, empty `oneof`
-     handling, `UnrecognizedEnum` and `DefaultValue[UnknownFieldSet]`
- - if you build Chimney (or a Hearth-based macro library) **from source**: the Scala 3 sources require Hearth's
-   `hearth-cross-quotes` compiler plugin (see
-   [Under the Hood](under-the-hood.md#scala-2-vs-scala-3-in-derivation)) - Chimney's own `build.sbt` configures it
-   already, this only matters when vendoring the sources into another build
+  - in core DSL:
+    - `.toPartialResult` extension method from `import io.scalaland.chimney.dsl._` was dropped since
+      `.asResult` from `import io.scalaland.chimney.partial.syntax._` supports this and other use cases
+    - `.toPartialResultOrString` got replaced by `.orStringAsResult`
+    - `.withCoproductInstance` and `.withCoproductInstancePartial` got removed, since `.withSealedSubtype...` and
+      `.withEnumCase...` better describe what they do
+  - the Java collections integration module (`chimney-java-collections`) was **removed** - `java.util.Optional`,
+    `java.util` collections/maps, `java.util.stream`s and Java boxed primitives are
+    [supported out of the box](cookbook.md#java-collections-integration) on the JVM now; drop the dependency and the
+    `import io.scalaland.chimney.javacollections._` and everything should keep working (if you used the generic
+    `javaEnumSet`/`javaEnumMap` implicits with an abstract `E <: Enum[E]` type parameter, you now need to provide
+    your own `integrations.TotallyBuildIterable`/`TotallyBuildMap` for that use case)
+  - in Cats integration module:
+    - the `io.scalaland.chimney.integrations` instances for `cats.data` types (`Chain`, `NonEmptyList`,
+      `NonEmptySet`, ...) were **removed** from `chimney-cats` - add
+      [`com.kubuszok::kindlings-cats-integration`](cookbook.md#conversions-tofrom-cats-collections) to the classpath
+      instead (no import needed); note [the behavior changes](cookbook.md#conversions-tofrom-cats-collections):
+      same-type `NonEmpty*` conversions (except `NonEmptyList`) are `PartialTransformer`-only now, the empty-input
+      error message changed, and `NonEmptySeq`/`NonEmptyLazyList` are not covered yet
+    - the `Traverse`/`~>` (FunctionK)-based outer transformers were **removed** without replacement - if you relied
+      on them, define your own [`TotalOuterTransformer`/`PartialOuterTransformer`](cookbook.md#custom-outer-type-conversion)
+    - the type class instances for Chimney's types and the `Validated` <-> `partial.Result` conversions stay in
+      `chimney-cats` unchanged
+  - in Protobuf integration module:
+    - `trait ProtobufTransformerImplicits` was renamed to `trait ProtobufsTransformerImplicits` to match the convention of
+      the rest of the codebase (shouldn't affect anyone who use just `import io.scalaland.chimney.protobufs._` but still
+      a breaking change)
+    - the implicits for the well-known types - the `wrappers.*Value` `Transformer`s
+      (`totalTransformerFromBoolValueToBoolean` and friends), the `ByteString`/`BytesValue` integrations
+      (`protobufByteStringIsTotallyBuildIterable`/`protobufBytesValueIsTotallyBuildIterable`, which in earlier
+      `2.0.0` milestones replaced the `1.x` `totalTransformerFrom{ByteString,BytesValue}ToByteCollection` pairs)
+      and `Timestamp` <-> `java.time.Instant` (`totalTransformerFromTimestampToJavaInstantInstance` and back) - were
+      **removed**: the artifact now ships
+      [macro-extension providers](cookbook.md#build-in-scalapb-types) serving these conversions with **no import at
+      all** (just keep `chimney-protobufs` on the classpath)
+    - `import io.scalaland.chimney.protobufs._` is still needed for `Empty`, the `Duration` family, empty `oneof`
+      handling, `UnrecognizedEnum` and `DefaultValue[UnknownFieldSet]`
+  - if you build Chimney (or a Hearth-based macro library) **from source**: the Scala 3 sources require Hearth's
+    `hearth-cross-quotes` compiler plugin (see
+    [Under the Hood](under-the-hood.md#scala-2-vs-scala-3-in-derivation)) - Chimney's own `build.sbt` configures it
+    already, this only matters when vendoring the sources into another build
    
 ## Migration from 0.8.x to 1.0.0
 
